@@ -259,21 +259,38 @@ UNIVERSAL_ROUTER=0x4fcA4a51Ab4F23A7447b3284fBd7D73289A89Fb1 \
 
 Answers the two questions the architecture rests on: does the live router expose `msgSender()`, and is USDC native or ERC-20. Expect `>>> OK` on both.
 
-### One command for everything else
+### Deploy to Arc testnet — the real path
 
 ```bash
-KEEP_ALIVE=1 ./scripts/test-only/dev.sh
+./scripts/deploy-testnet.sh
 ```
 
-Forks Arc mainnet, deploys at a mined address, funds clean undelegated wallets, seeds real trades through the real Universal Router, and writes `web/src/config/deployed.json`.
+Re-verifies the v4 bytecode and `msgSender()` on chain, deploys the hook at a mined `0x2044` address via CREATE2, deploys the launcher and quoter, trusts the Universal Router, hands ownership to `TREASURY`, re-checks `owner()`/`treasury()`/`trustedRouter()`/bitmap with `cast`, and writes `web/src/config/deployed.json`.
+
+It **seeds nothing**. No coins, no trades, no bot. Every coin and every trade in the app comes from a real wallet afterwards — launch the first one at `/launch`.
 
 ```bash
-cd web && npm run dev
+cd web && npm run dev     # http://localhost:4000
 ```
 
-> **Arc testnet also works.** Verified 2026-11-06: Uniswap v4 is fully deployed on Arc testnet (chain 5042002) at the **same addresses as mainnet** — PoolManager, Universal Router (with a working `msgSender()`), PositionManager and Permit2 all respond. So a real testnet deployment is possible with free test USDC, and a mainnet fork is only needed for offline work.
+Test USDC: [faucet.circle.com](https://faucet.circle.com). The deployer needs about **$0.25** of gas; a coin launch needs whatever liquidity you choose to lock.
+
+Uniswap v4 is fully deployed on Arc testnet (chain 5042002) at the **same addresses as mainnet** — verified 2026-11-06 by `eth_getCode` plus a live `msgSender()` call.
+
+### Working offline against a fork
+
+`scripts/test-only/dev.sh` forks Arc mainnet, forges balances and seeds trades. It is development tooling, not the product — see [`scripts/test-only/README.md`](scripts/test-only/README.md). Running it overwrites `deployed.json` and points the app at your fork.
 
 > **EIP-7702 warning.** Every well-known test address carries a delegation on Arc mainnet (`0xef0100…` → a sweeper that forwards any native USDC it receives). A fork inherits it, so anvil's default accounts must never hold demo funds. `dev.sh` derives project-specific undelegated wallets and asserts `code.length == 0` before funding them. **Never fund an anvil default address on Arc mainnet — it will be swept instantly.**
+
+### End-to-end on testnet
+
+```bash
+npx tsx web/scripts/e2e-testnet.ts            # dry run, sends nothing
+E2E_KEY_A=0x… E2E_KEY_B=0x… npx tsx web/scripts/e2e-testnet.ts --send
+```
+
+Launch → buy with a referrer → second wallet copies → sell → claim, printing an arcscan link per transaction. Keys come from the environment only.
 
 ---
 
@@ -305,9 +322,11 @@ Stated plainly, because they are real.
 | `WinCutLauncher` + `WinCutCoin` | ✅ complete, seed liquidity locked |
 | `WinCutQuoter` + `UniversalRouterLib` | ✅ complete, storage-free quoting |
 | Tests | ✅ 31 passing, 12 against real Arc v4 |
-| Phase 0 / Deploy / Seed / `dev.sh` | ✅ complete, one command |
-| Frontend — Trade, Result, Board, Me | ✅ builds clean, flow verified end to end |
-| Browser visual pass | ⚠️ renders (HTTP 200, no runtime errors) but not visually confirmed in this environment |
+| Phase 0 / `deploy-testnet.sh` | ✅ complete, one command, verifies its own work |
+| Frontend — Discover, Launch, Coin, Board, Trader, Me | ✅ builds clean (zero warnings), all 7 routes HTTP 200 |
+| Real data only | ✅ no generated names, no seeded coins; result screen decodes the tx receipt |
+| Arc testnet deployment | ⬜ awaiting gas in the deployer wallet |
+| Browser visual pass | ⚠️ renders server-side with no errors, both deployed and undeployed; not visually confirmed in this environment |
 | Indexer (Envio) | ⬜ not started |
 | World ID | ⬜ not started |
 
