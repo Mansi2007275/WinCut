@@ -1,0 +1,21 @@
+{
+  "chainId": 5042,
+  "chainName": "Arc (local fork)",
+  "rpcUrl": "http://127.0.0.1:8545",
+  "explorer": "https://explorer.arc.io",
+  "contracts": {
+    "winCutHook": "0xd4A4ABADf6A309aC156992085A72a04AB251a044",
+    "winCutLauncher": "0x82Bd83ec6D4bCC8EaB6F6cF7565efE1e41D92Ce5",
+    "poolManager": "0x8366a39CC670B4001A1121B8F6A443A643e40951",
+    "universalRouter": "0x4fcA4a51Ab4F23A7447b3284fBd7D73289A89Fb1",
+    "permit2": "0x000000000022D473030F116dDEE9F6B43aC78BA3"
+  },
+  "quote": {
+    "address": "0x0000000000000000000000000000000000000000",
+    "symbol": "USDC",
+    "decimals": 18,
+    "isNative": true
+  },
+  "pool": { "fee": 3000, "tickSpacing": 60 },
+  "generatedAt": "2026-11-06T11:47:19Z"
+}

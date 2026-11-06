@@ -49,12 +49,12 @@ abstract contract WinCutBase is Test {
         uint160 flags =
             uint160(Hooks.BEFORE_INITIALIZE_FLAG | Hooks.AFTER_SWAP_FLAG | Hooks.AFTER_SWAP_RETURNS_DELTA_FLAG);
         bytes memory args =
-            abi.encode(IPoolManager(address(pm)), Currency.wrap(address(usdc)), treasury, uint256(0));
+            abi.encode(IPoolManager(address(pm)), Currency.wrap(address(usdc)), treasury, uint256(0), address(this));
         (address target, bytes32 salt) =
             HookMiner.find(address(this), flags, type(WinCutHook).creationCode, args);
 
         hook = new WinCutHook{salt: salt}(
-            IPoolManager(address(pm)), Currency.wrap(address(usdc)), treasury, 0
+            IPoolManager(address(pm)), Currency.wrap(address(usdc)), treasury, 0, address(this)
         );
         assertEq(address(hook), target, "mined hook address mismatch");
 

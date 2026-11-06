@@ -15,58 +15,89 @@ import {WinCutLauncher} from "../src/WinCutLauncher.sol";
 /// Required env:
 ///   POOL_MANAGER     v4 PoolManager on the target chain
 ///   QUOTE            the quote currency. address(0) for NATIVE USDC on Arc,
-///                    or 0x3600000000000000000000000000000000000000 for the ERC-20 interface.
-///                    Run Phase0.s.sol FIRST to find out which the live pools use.
+///                    0x3600...0000 for the ERC-20 interface. Phase0 decides this;
+///                    on Arc mainnet the evidence says NATIVE.
 ///   UNIVERSAL_ROUTER the router to trust for attribution
 ///   TREASURY         fee recipient
 ///   MAX_TRADE_SIZE   per-trade cap in QUOTE units, 0 to disable
 contract Deploy is Script {
-    /// @dev CREATE2_FACTORY (0x4e59...4956C) is inherited from forge-std CommonBase.
-    ///      It is the canonical deterministic deployer, identical on every EVM chain,
-    ///      so the mined hook address does not depend on the deployer's nonce.
-    function run() external {
-        address poolManager = vm.envAddress("POOL_MANAGER");
-        address quote = vm.envAddress("QUOTE");
-        address universalRouter = vm.envAddress("UNIVERSAL_ROUTER");
-        address treasury = vm.envAddress("TREASURY");
-        uint256 maxTradeSize = vm.envOr("MAX_TRADE_SIZE", uint256(0));
+    struct Config {
+        address poolManager;
+        address quote;
+        address universalRouter;
+        address treasury;
+        uint256 maxTradeSize;
+        address owner;
+    }
 
+    /// @dev CREATE2_FACTORY (0x4e59...4956C) comes from forge-std CommonBase.
+    ///      It is the canonical deterministic deployer, identical on every EVM
+    ///      chain, so the mined hook address never depends on a deployer nonce.
+    function run() external {
+        Config memory cfg = Config({
+            poolManager: vm.envAddress("POOL_MANAGER"),
+            quote: vm.envAddress("QUOTE"),
+            universalRouter: vm.envAddress("UNIVERSAL_ROUTER"),
+            treasury: vm.envAddress("TREASURY"),
+            maxTradeSize: vm.envOr("MAX_TRADE_SIZE", uint256(0)),
+            // The broadcasting EOA. Deliberately NOT msg.sender inside the hook
+            // constructor: the hook is deployed via the CREATE2 factory, so
+            // msg.sender there is the factory, which would own the hook and lock
+            // the deployer out of setLauncher().
+            owner: msg.sender
+        });
+
+        (address hook, address launcher) = _deploy(cfg);
+        _report(cfg, hook, launcher);
+    }
+
+    function _deploy(Config memory cfg) internal returns (address hookAddr, address launcherAddr) {
         // FROZEN permission bitmap: 0x2044.
         uint160 flags =
             uint160(Hooks.BEFORE_INITIALIZE_FLAG | Hooks.AFTER_SWAP_FLAG | Hooks.AFTER_SWAP_RETURNS_DELTA_FLAG);
 
-        bytes memory args =
-            abi.encode(IPoolManager(poolManager), Currency.wrap(quote), treasury, maxTradeSize);
+        bytes memory args = abi.encode(
+            IPoolManager(cfg.poolManager),
+            Currency.wrap(cfg.quote),
+            cfg.treasury,
+            cfg.maxTradeSize,
+            cfg.owner
+        );
 
         (address target, bytes32 salt) =
             HookMiner.find(CREATE2_FACTORY, flags, type(WinCutHook).creationCode, args);
 
         console.log("mined hook address :", target);
         console.log("salt               :", vm.toString(salt));
-        console.log("permission bits     :", uint160(target) & Hooks.ALL_HOOK_MASK);
+        console.log("permission bits    :", uint160(target) & Hooks.ALL_HOOK_MASK);
+        require((uint160(target) & Hooks.ALL_HOOK_MASK) == 0x2044, "bitmap must be 0x2044");
 
         vm.startBroadcast();
 
-        bytes memory initcode = abi.encodePacked(type(WinCutHook).creationCode, args);
-        (bool ok, bytes memory ret) = CREATE2_FACTORY.call(abi.encodePacked(salt, initcode));
+        (bool ok, bytes memory ret) =
+            CREATE2_FACTORY.call(abi.encodePacked(salt, abi.encodePacked(type(WinCutHook).creationCode, args)));
         require(ok, "CREATE2 deploy failed");
-        address hookAddr = address(uint160(bytes20(ret)));
+        hookAddr = address(uint160(bytes20(ret)));
         require(hookAddr == target, "hook address mismatch");
 
         WinCutHook hook = WinCutHook(payable(hookAddr));
-        WinCutLauncher launcher = new WinCutLauncher(IPoolManager(poolManager), hook);
+        WinCutLauncher launcher = new WinCutLauncher(IPoolManager(cfg.poolManager), hook);
+        launcherAddr = address(launcher);
 
-        hook.setLauncher(address(launcher));
-        hook.setTrustedRouter(universalRouter, true);
+        hook.setLauncher(launcherAddr);
+        hook.setTrustedRouter(cfg.universalRouter, true);
 
         vm.stopBroadcast();
+    }
 
+    function _report(Config memory cfg, address hook, address launcher) internal pure {
         console.log("");
         console.log("=== WinCut deployed ===");
-        console.log("WinCutHook     :", address(hook));
-        console.log("WinCutLauncher :", address(launcher));
-        console.log("QUOTE          :", quote);
-        console.log("trusted router :", universalRouter);
-        console.log("treasury       :", treasury);
+        console.log("WinCutHook     :", hook);
+        console.log("WinCutLauncher :", launcher);
+        console.log("QUOTE          :", cfg.quote);
+        console.log("trusted router :", cfg.universalRouter);
+        console.log("treasury       :", cfg.treasury);
+        console.log("owner          :", cfg.owner);
     }
 }

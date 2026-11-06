@@ -104,11 +104,16 @@ contract WinCutHook is BaseHook, Ownable {
     error NothingToClaim();
     error ZeroAddress();
 
-    constructor(IPoolManager _pm, Currency _quote, address _treasury, uint256 _maxTradeSize)
+    /// @param _owner the admin address. Passed explicitly and NOT taken from
+    ///        msg.sender, because the hook is deployed through the canonical
+    ///        CREATE2 factory to mine its permission bits. msg.sender inside the
+    ///        constructor is therefore the factory, which would otherwise end up
+    ///        owning the hook and lock the real deployer out of setLauncher().
+    constructor(IPoolManager _pm, Currency _quote, address _treasury, uint256 _maxTradeSize, address _owner)
         BaseHook(_pm)
-        Ownable(msg.sender)
+        Ownable(_owner)
     {
-        if (_treasury == address(0)) revert ZeroAddress();
+        if (_treasury == address(0) || _owner == address(0)) revert ZeroAddress();
         QUOTE = _quote;
         treasury = _treasury;
         maxTradeSize = _maxTradeSize;
