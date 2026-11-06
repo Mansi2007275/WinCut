@@ -62,7 +62,7 @@ function Discover() {
   const { rows } = useLeaderboard();
   const { address, isConnected } = useAccount();
   const { data: bal } = useBalance({ address });
-  const watchlist = useWatchlist();
+  const { has: watched } = useWatchlist();
 
   const [tab, setTab] = useState<TabId>("trending");
   const [query, setQuery] = useState("");
@@ -82,10 +82,10 @@ function Discover() {
     const swapsOf = (c: Coin) =>
       (trades.data ?? []).filter((t) => t.poolId === c.poolId).length;
     if (tab === "new") return [...coins].reverse();
-    if (tab === "watchlist") return coins.filter((c) => watchlist.has(c.address));
+    if (tab === "watchlist") return coins.filter((c) => watched(c.address));
     if (tab === "trending") return [...coins].sort((a, b) => swapsOf(b) - swapsOf(a));
     return coins;
-  }, [coins, tab, trades.data, watchlist]);
+  }, [coins, tab, trades.data, watched]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -271,7 +271,6 @@ function CoinRow({ coin, index, head }: { coin: Coin; index: number; head?: bigi
 
   return (
     <motion.div
-      layout
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: Math.min(index * 0.03, 0.15), duration: 0.2 }}

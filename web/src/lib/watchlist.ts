@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { isAddress, type Address } from "viem";
 
 const KEY = "wincut.watchlist";
@@ -66,5 +66,8 @@ export function useWatchlist() {
     [list],
   );
 
-  return { list, toggle, has };
+  // Memoised: callers put this in useMemo dependency lists, and a fresh object
+  // every render made their ordering recompute on every single render, which
+  // thrashed the layout animations downstream.
+  return useMemo(() => ({ list, toggle, has }), [list, toggle, has]);
 }
