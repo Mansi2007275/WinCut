@@ -240,7 +240,10 @@ export function useTrades() {
   return useQuery({
     queryKey: ["trades"],
     enabled: !!client && isDeployed,
-    refetchInterval: 10_000,
+    // A full log scan. See the note in logs.ts: polling these every 10s is
+    // what tripped Arc's rate limiter and emptied the screen.
+    refetchInterval: 30_000,
+    staleTime: 15_000,
     queryFn: () => fetchTrades(client as PublicClient),
   });
 }
@@ -363,7 +366,8 @@ export function usePriceSeries(poolId?: `0x${string}`, quoteIsCurrency0 = true) 
   return useQuery({
     queryKey: ["priceSeries", poolId, quoteIsCurrency0],
     enabled: !!client && !!poolId && isDeployed,
-    refetchInterval: 10_000,
+    refetchInterval: 30_000,
+    staleTime: 15_000,
     queryFn: async (): Promise<PricePoint[]> => {
       const logs = await getLogsChunked(client as PublicClient, {
         address: addr.poolManager,
@@ -419,7 +423,8 @@ export function useCoinStats(coin?: Coin) {
   const holders = useQuery({
     queryKey: ["holders", coin?.address],
     enabled: !!client && !!coin && isDeployed,
-    refetchInterval: 20_000,
+    refetchInterval: 60_000,
+    staleTime: 30_000,
     queryFn: async (): Promise<number> => {
       const logs = await getLogsChunked(client as PublicClient, {
         address: coin!.address,

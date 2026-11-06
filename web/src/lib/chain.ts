@@ -15,10 +15,26 @@ export const arc = defineChain({
   testnet: true,
 });
 
+/**
+ * Arc's public RPC rate-limits hard (-32005) and caps eth_getLogs at a 5,000
+ * block range (-32012). A plain `http(url)` sends one HTTP request per read,
+ * so a single screen fired hundreds of them and the limiter started refusing
+ * calls -- which surfaced as "CANNOT REACH ARC" on the coin page.
+ *
+ * Batching collapses the many eth_calls a screen makes into a few HTTP
+ * requests, and the retries ride out a limiter that briefly says no.
+ */
+export const arcTransport = http(deployed.rpcUrl, {
+  batch: { batchSize: 20, wait: 16 },
+  retryCount: 5,
+  retryDelay: 250,
+  timeout: 20_000,
+});
+
 export const wagmiConfig = createConfig({
   chains: [arc],
   connectors: [injected()],
-  transports: { [arc.id]: http(deployed.rpcUrl) },
+  transports: { [arc.id]: arcTransport },
   ssr: true,
 });
 
