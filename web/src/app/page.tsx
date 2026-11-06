@@ -94,10 +94,22 @@ function Discover() {
           10% of your <em>profit</em> only. A losing exit costs $0 and banks a credit against your
           next win.
         </p>
+        {/* The full log scan takes a few seconds. Until it lands these are all
+            zero, and rendering that reads as "WinCut has never charged a fee"
+            rather than "still counting" -- the same confidently-wrong-number
+            problem as the dropped log windows. Show a dash instead. */}
         <div className="mt-3 grid grid-cols-3 gap-2">
-          <StatTile label="Fees charged" value={usd(totalFees)} />
-          <StatTile label="Free exits" value={freeExits} sub="charged $0" />
-          <StatTile label="Dumpers" value={dumpers} tone={dumpers ? "loss" : "white"} />
+          <StatTile label="Fees charged" value={trades.isPending ? "…" : usd(totalFees)} />
+          <StatTile
+            label="Free exits"
+            value={trades.isPending ? "…" : freeExits}
+            sub="charged $0"
+          />
+          <StatTile
+            label="Dumpers"
+            value={trades.isPending ? "…" : dumpers}
+            tone={dumpers ? "loss" : "white"}
+          />
         </div>
       </Card>
 
@@ -233,7 +245,9 @@ function CoinCard({ coin, index, head }: { coin: Coin; index: number; head?: big
               <TxLink hash={latest.tx} />
             </p>
           ) : (
-            <p className="font-mono text-[10px] text-muted">No trades yet. Be the first.</p>
+            <p className="font-mono text-[10px] text-muted">
+              {trades.isPending ? "Reading trades from chain…" : "No trades yet. Be the first."}
+            </p>
           )}
         </div>
 
