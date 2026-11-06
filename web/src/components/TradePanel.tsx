@@ -7,7 +7,13 @@ import type { Address } from "viem";
 import { Button, Card, Chip, Row, Tabs, ErrorBox, Skeleton } from "./ui";
 import { ConnectCta, FaucetLink } from "./NetworkGate";
 import { useToast } from "./Toast";
-import { useAccountState, useCoinBalance, usePosition, type Coin } from "@/lib/data";
+import {
+  useAccountState,
+  useCoinBalance,
+  useMaxTradeSize,
+  usePosition,
+  type Coin,
+} from "@/lib/data";
 import { addr, QUOTE, buyDirection, sellDirection } from "@/lib/chain";
 import { erc20Abi, permit2Abi, universalRouterAbi } from "@/config/abis";
 import { quoteBuy, quoteSell } from "@/lib/quote";
@@ -55,6 +61,10 @@ export function TradePanel({
   const position = usePosition(address, coin.poolId);
   const coinBal = useCoinBalance(coin.address, address);
   const acct = useAccountState(address);
+  const maxTrade = useMaxTradeSize();
+  /// 0 means the owner has not set a cap. Declared here, above the quote
+  /// effect that reports TradeTooLarge(), so there is no use-before-define.
+  const cap = maxTrade.data ?? 0n;
 
   const amountQuote = side === "buy" ? parseUsd(amount) : 0n;
   const sellCoins = useMemo(() => {
@@ -113,7 +123,7 @@ export function TradePanel({
       } catch (e) {
         if (!cancelled) {
           setQuote(null);
-          setError(reason(e));
+          setError(reason(e, cap));
         }
       } finally {
         if (!cancelled) setQuoting(false);
@@ -124,7 +134,16 @@ export function TradePanel({
       cancelled = true;
       clearTimeout(t);
     };
-  }, [client, coin, side, amountQuote, sellCoins, address, acct.data?.lossCredit]);
+  }, [client, coin, side, amountQuote, sellCoins, address, acct.data?.lossCredit, cap]);
+
+  /**
+   * The hook caps the QUOTE side of every trade and reverts TradeTooLarge()
+   * above it -- `spent` on a buy, `grossOut` on a sell. Checking both here
+   * means the button is disabled before the wallet ever opens, instead of the
+   * user paying gas to discover the limit.
+   */
+  const tradeQuoteSide = side === "buy" ? amountQuote : (quote?.grossOut ?? 0n);
+  const overLimit = cap > 0n && tradeQuoteSide > cap;
 
   /// Profit shown in the preview is the pool's gross minus the proportional
   /// cost basis the hook is holding. The fee itself still comes from quoteFee.
@@ -234,7 +253,7 @@ export function TradePanel({
         unattributed: !sell && !buy,
       });
     } catch (e) {
-      const msg = reason(e);
+      const msg = reason(e, cap);
       setError(msg);
       toast.update(toastId, { kind: "failed", title: "Transaction failed", detail: msg });
     } finally {
@@ -247,6 +266,7 @@ export function TradePanel({
     isConnected &&
     !!quote &&
     !busy &&
+    !overLimit &&
     (side === "buy" ? amountQuote > 0n : sellCoins > 0n && sellCoins <= bal);
 
   return (
@@ -382,6 +402,10 @@ export function TradePanel({
         </motion.div>
       )}
 
+      {overLimit && (
+        <ErrorBox title={maxTradeLabel(cap)} detail={capDetail(side, tradeQuoteSide)} />
+      )}
+
       {error && <ErrorBox title="Quote or transaction failed" detail={error} />}
 
       {isConnected ? (
@@ -408,8 +432,39 @@ function proportionalBasis(pos: { amount: bigint; cost: bigint }, selling: bigin
   return (pos.cost * attributed) / pos.amount;
 }
 
-export function reason(e: unknown): string {
+/// The cap, phrased the one way it is phrased everywhere in the app.
+export function maxTradeLabel(cap: bigint): string {
+  return `Max trade on testnet is ${usd(cap)}`;
+}
+
+function capDetail(side: Side, attempted: bigint): string {
+  return side === "buy"
+    ? `This buy is ${usd(attempted)}. Lower the amount to continue.`
+    : `This sell would return ${usd(attempted)} in gross proceeds. Sell a smaller percentage.`;
+}
+
+/// Raised when the hook rejects a trade above maxTradeSize. Declared in
+/// winCutHookAbi, but the revert can also arrive wrapped by the router, so it
+/// is matched on the selector too.
+const TRADE_TOO_LARGE_SELECTOR = "0x04213078";
+
+export function reason(e: unknown, cap?: bigint): string {
   if (!e) return "unknown error";
-  const m = e as { shortMessage?: string; details?: string; message?: string };
-  return m.shortMessage ?? m.details ?? m.message ?? String(e);
+  const m = e as {
+    shortMessage?: string;
+    details?: string;
+    message?: string;
+    data?: unknown;
+  };
+  const text = m.shortMessage ?? m.details ?? m.message ?? String(e);
+  const haystack = `${text} ${JSON.stringify(m.data ?? "")} ${String(e)}`;
+  if (
+    haystack.includes("TradeTooLarge") ||
+    haystack.includes(TRADE_TOO_LARGE_SELECTOR)
+  ) {
+    return cap && cap > 0n
+      ? maxTradeLabel(cap)
+      : "That trade is over the testnet limit for this hook";
+  }
+  return text;
 }

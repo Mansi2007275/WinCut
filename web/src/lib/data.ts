@@ -81,6 +81,28 @@ export function useCoins() {
   });
 }
 
+/**
+ * The hook's per-trade cap, in QUOTE units. 0 means no cap.
+ *
+ * Read from the contract rather than hard-coded: it is owner-settable, and a
+ * stale constant here would either block valid trades or let the user sign a
+ * transaction that reverts with TradeTooLarge() at the very last step.
+ */
+export function useMaxTradeSize() {
+  const client = usePublicClient();
+  return useQuery({
+    queryKey: ["maxTradeSize"],
+    enabled: !!client && isDeployed,
+    staleTime: 60_000,
+    queryFn: async (): Promise<bigint> =>
+      client!.readContract({
+        address: addr.hook,
+        abi: winCutHookAbi,
+        functionName: "maxTradeSize",
+      }),
+  });
+}
+
 export function usePosition(trader?: Address, poolId?: `0x${string}`) {
   const client = usePublicClient();
   return useQuery({

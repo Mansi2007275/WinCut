@@ -71,6 +71,11 @@ export const winCutHookAbi = [
   },
   { type: "function", name: "claim", stateMutability: "nonpayable", inputs: [], outputs: [{ type: "uint256" }] },
   { type: "function", name: "paused", stateMutability: "view", inputs: [], outputs: [{ type: "bool" }] },
+  // Per-trade cap in QUOTE units. 0 disables it. The hook reverts
+  // TradeTooLarge() above this, so the UI reads it rather than guessing.
+  { type: "function", name: "maxTradeSize", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
+  // Declared so viem can decode the revert into a readable message.
+  { type: "error", name: "TradeTooLarge", inputs: [] },
   { type: "function", name: "treasury", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
   { type: "function", name: "owner", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
   {
