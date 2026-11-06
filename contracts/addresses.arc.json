@@ -1,0 +1,72 @@
+{
+  "_comment": "Arc mainnet addresses. Every entry was verified on-chain with cast, not taken from a third party. Re-verify before mainnet deployment.",
+  "_verifiedAt": "2026-11-06",
+  "_verifiedAtBlock": 29830463,
+
+  "mainnet": {
+    "chainId": 5042,
+    "rpc": "https://rpc.mainnet.arc.io",
+
+    "contracts": {
+      "PoolManager": {
+        "address": "0x8366a39CC670B4001A1121B8F6A443A643e40951",
+        "bytecodeSize": 24009,
+        "verified": "owner() returns 0xbCA30b5429935205037069cF5b8A165F55d05a75",
+        "status": "CONFIRMED"
+      },
+      "UniversalRouter": {
+        "address": "0x4fca4a51ab4f23a7447b3284fbd7d73289a89fb1",
+        "bytecodeSize": 24546,
+        "verified": "execute(bytes,bytes[],uint256) 0x3593564c present; execute(bytes,bytes[]) 0x24856bc3 present; msgSender() 0xd737d0c7 present in bytecode and a live call returns address(0) WITHOUT reverting",
+        "status": "CONFIRMED - attribution works"
+      },
+      "PositionManager": {
+        "address": "0x6049c9a0e26405C0985f9E3685C87d0aE917f82B",
+        "bytecodeSize": 23877,
+        "status": "CONFIRMED - bytecode present"
+      },
+      "Permit2": {
+        "address": "0x000000000022D473030F116dDEE9F6B43aC78BA3",
+        "bytecodeSize": 9152,
+        "status": "CONFIRMED - canonical address, same on every chain"
+      },
+      "V4Quoter": {
+        "address": null,
+        "status": "NOT YET VERIFIED - needs the official deployments page or an on-chain probe"
+      }
+    },
+
+    "quoteCurrency": {
+      "decision": "NATIVE",
+      "address": "0x0000000000000000000000000000000000000000",
+      "decimals": 18,
+      "evidence": [
+        "129 of the Initialize events sampled across blocks 29790463-29830463 have currency0 == address(0), i.e. real Arc v4 pools pair against NATIVE USDC",
+        "a sampled real pool had currency0=0x000..000, currency1=0xc816e521c38e92dc0408b4434f2c9bf0fecd6777, fee=2500, tickSpacing=50, hooks=address(0)",
+        "PoolManager native balance 2695092197412180258688951 (18dp = $2,695,092.20) vs ERC-20 balanceOf 2695297895145 (6dp = $2,695,297.90), ratio 9.9992e11 ~= 1e12"
+      ],
+      "why": "Pools must pair against native USDC to match the Arc ecosystem, so existing routers and indexers can see them. It is also strictly safer: currency.isAddressZero() cannot be spoofed, so the fake-USDC problem disappears entirely."
+    },
+
+    "usdcErc20Interface": {
+      "address": "0x3600000000000000000000000000000000000000",
+      "name": "USDC",
+      "symbol": "USDC",
+      "decimals": 6,
+      "totalSupply": "1204050346438467",
+      "warning": "SAME MONEY as native USDC but 1e12 apart. Never mix the two in accounting. WinCutHook pins exactly one via its immutable QUOTE and beforeInitialize rejects pools built on the other."
+    },
+
+    "ecosystemConvention": {
+      "observedPoolFee": 2500,
+      "observedTickSpacing": 50,
+      "note": "WinCutLauncher uses fee 3000 / tickSpacing 60. Both are valid; fee and tickSpacing live in the PoolKey, not in the hook address, so changing them does NOT require re-mining the hook."
+    }
+  },
+
+  "testnet": {
+    "chainId": 5042002,
+    "rpc": "https://rpc.testnet.arc.io",
+    "note": "RPC is live and returns chain id 5042002, but a v4 deployment there is UNCONFIRMED. Develop against an Anvil fork of mainnet instead."
+  }
+}
