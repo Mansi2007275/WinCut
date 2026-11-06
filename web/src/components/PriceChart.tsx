@@ -94,6 +94,12 @@ export function PriceChart({
 
     const c = createChart(el, {
       height,
+      // autoSize rather than a hand-rolled ResizeObserver: calling
+      // applyOptions({width}) from inside an observer on the same element
+      // resizes the canvas, which refires the observer, which resizes again.
+      // That feedback loop pinned the renderer hard enough that screenshotting
+      // the page timed out.
+      autoSize: true,
       layout: {
         background: { type: ColorType.Solid, color: "transparent" },
         textColor: "#8A929C",
@@ -131,12 +137,7 @@ export function PriceChart({
       hover.current?.(point?.value);
     });
 
-    const ro = new ResizeObserver(() => c.applyOptions({ width: el.clientWidth }));
-    ro.observe(el);
-    c.applyOptions({ width: el.clientWidth });
-
     return () => {
-      ro.disconnect();
       c.remove();
       chart.current = null;
       area.current = null;

@@ -220,7 +220,14 @@ function CoinScreen() {
         <StatTile label="Swaps" value={stats?.swaps ?? "—"} />
         <StatTile
           label="Market cap"
-          value={stats?.marketCap === undefined ? "—" : fmtPrice(stats.marketCap)}
+          value={
+            stats?.marketCap === undefined
+              ? "—"
+              : `$${stats.marketCap.toLocaleString("en-US", {
+                  minimumFractionDigits: 2,
+                  maximumFractionDigits: 2,
+                })}`
+          }
           sub="price × fixed supply"
         />
       </div>
