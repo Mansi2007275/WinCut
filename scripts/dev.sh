@@ -110,6 +110,18 @@ for i in $(seq 0 13); do
   fi
   cast rpc anvil_setBalance "$A" "$FUND_WEI" --rpc-url "$LOCAL_RPC" >/dev/null
 done
+# Fund the presenter's own wallet too, so MetaMask can connect a real account
+# instead of importing a throwaway key. Override with DEMO_WALLET=0x...
+DEMO_WALLET="${DEMO_WALLET:-0xE3f8da887397706Ddca28a8D27284f3bcE42eb4f}"
+if [[ -n "$DEMO_WALLET" ]]; then
+  DW_CODE=$(cast code "$DEMO_WALLET" --rpc-url "$LOCAL_RPC" 2>/dev/null)
+  if [[ -n "$DW_CODE" && "$DW_CODE" != "0x" ]]; then
+    echo "[dev]      WARNING: $DEMO_WALLET has code (EIP-7702). Native received there"
+    echo "[dev]               may be forwarded away. Use a fresh address instead."
+  fi
+  cast rpc anvil_setBalance "$DEMO_WALLET" "$FUND_WEI" --rpc-url "$LOCAL_RPC" >/dev/null
+  echo "[dev]      funded YOUR wallet $DEMO_WALLET with 2,000,000 USDC"
+fi
 echo "[dev]      funded 14 clean wallets"
 
 echo "[dev] 4/5  seeding real trades through the real Universal Router"
@@ -148,7 +160,10 @@ JSON
 cat web/src/config/deployed.json
 
 echo ""
-echo "[dev] ready. RPC $LOCAL_RPC  (chain 5042)"
+echo "[dev] ready."
+echo "[dev]   app  : http://localhost:4000      (run: cd web && npm run dev)"
+echo "[dev]   rpc  : $LOCAL_RPC"
+echo "[dev]   chain: 5042   currency: USDC   decimals: 18"
 echo "[dev] import this key into your wallet for testing:"
 echo "[dev]   $DEPLOYER_PK"
 echo "[dev]   ^ public Anvil test key. Never use it on a real network."
