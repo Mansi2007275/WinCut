@@ -96,16 +96,16 @@ export function ToastProvider({ children }: { children: ReactNode }) {
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: 8, scale: 0.97 }}
               transition={{ type: "spring", stiffness: 420, damping: 32 }}
-              className={`nb-sm pointer-events-auto p-3 ${toneOf(t.kind)}`}
+              className={`pointer-events-auto rounded-card border p-3 ${toneOf(t.kind)}`}
             >
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
-                  <p className="font-display text-xs uppercase leading-tight">
+                  <p className="flex items-center text-xs leading-tight font-semibold">
                     {t.kind === "pending" && <Spinner />}
                     {t.title}
                   </p>
                   {t.detail && (
-                    <p className="mt-1 break-words font-mono text-[10px] leading-snug opacity-80">
+                    <p className="mt-1 text-[11px] leading-snug break-words text-secondary">
                       {t.detail}
                     </p>
                   )}
@@ -114,7 +114,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
                       href={explorerTx(t.hash)}
                       target="_blank"
                       rel="noreferrer"
-                      className="mt-1 inline-block font-mono text-[10px] underline"
+                      className="mt-1 inline-block text-[11px] text-accent underline underline-offset-2"
                     >
                       view on explorer ↗
                     </a>
@@ -123,7 +123,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
                 <button
                   onClick={() => dismiss(t.id)}
                   aria-label="Dismiss"
-                  className="font-display text-sm leading-none opacity-60 hover:opacity-100"
+                  className="text-sm leading-none text-secondary hover:text-text"
                 >
                   ✕
                 </button>
@@ -136,12 +136,14 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   );
 }
 
+/// Tinted fills rather than saturated ones: a toast sits over content, and a
+/// solid green slab reads as a price move rather than a notification.
 function toneOf(k: Kind) {
   return {
-    pending: "bg-info text-white",
-    confirmed: "bg-profit",
-    failed: "bg-loss text-white",
-    info: "bg-white",
+    pending: "bg-surface border-accent/40 text-text",
+    confirmed: "bg-profit-dim border-profit/40 text-profit",
+    failed: "bg-loss-dim border-loss/40 text-loss",
+    info: "bg-surface border-border text-text",
   }[k];
 }
 
@@ -149,7 +151,7 @@ function Spinner() {
   return (
     <span
       aria-hidden
-      className="mr-1.5 inline-block h-2.5 w-2.5 animate-spin border-2 border-white border-t-transparent align-[-1px]"
+      className="mr-2 inline-block h-3 w-3 shrink-0 animate-spin rounded-pill border-2 border-accent border-t-transparent"
     />
   );
 }

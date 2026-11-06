@@ -27,12 +27,14 @@ export function NetworkGate() {
 export function NotDeployedBanner() {
   if (isDeployed) return null;
   return (
-    <Card tone="loss" className="p-4 text-white">
-      <p className="font-display text-sm uppercase">Not deployed yet</p>
-      <p className="mt-1 text-xs leading-snug">
+    <Card tone="loss" className="p-4">
+      <p className="text-sm font-semibold text-loss">Not deployed yet</p>
+      <p className="mt-1.5 text-xs leading-snug text-text/80">
         WinCut has no contracts on {deployed.chainName} in this build. Run{" "}
-        <code className="font-mono">./scripts/deploy-testnet.sh</code> to deploy, and the app will
-        pick up the addresses automatically.
+        <code className="rounded bg-elevated px-1 py-0.5 text-[11px]">
+          ./scripts/deploy-testnet.sh
+        </code>{" "}
+        to deploy, and the app will pick up the addresses automatically.
       </p>
     </Card>
   );
@@ -54,16 +56,16 @@ export function NoWalletBanner() {
   if (has !== false || isConnected) return null;
   return (
     <Card className="p-4">
-      <p className="font-display text-sm uppercase">No wallet found</p>
-      <p className="mt-1 text-xs leading-snug text-muted">
-        WinCut needs a browser wallet to sign trades on Arc. MetaMask works; so does any
-        injected EIP-1193 wallet.
+      <p className="text-sm font-semibold">No wallet found</p>
+      <p className="mt-1.5 text-xs leading-snug text-secondary">
+        WinCut needs a browser wallet to sign trades on Arc. MetaMask works; so does any injected
+        EIP-1193 wallet.
       </p>
       <a
         href="https://metamask.io/download/"
         target="_blank"
         rel="noreferrer"
-        className="nb-sm nb-press mt-3 inline-block bg-brand px-3 py-2 font-display text-xs uppercase"
+        className="tap mt-3 inline-flex items-center rounded-btn bg-accent px-3 text-sm font-semibold text-white transition-colors hover:bg-accent/90"
       >
         Install MetaMask ↗
       </a>
@@ -72,20 +74,16 @@ export function NoWalletBanner() {
 }
 
 /**
- * Wrong-network banner with a one-click fix.
+ * Asks the wallet to switch to Arc, and adds the chain when it has never heard
+ * of it.
  *
- * wagmi's switchChain asks the wallet to switch; if the wallet has never heard
- * of Arc it rejects with 4902, so we fall back to wallet_addEthereumChain with
- * the full chain definition. Without that fallback, a first-time visitor is
- * stuck being told to switch to a network they cannot select.
+ * wagmi's switchChain rejects with 4902 for an unknown chain, so without the
+ * wallet_addEthereumChain fallback a first-time visitor is stuck being told to
+ * switch to a network they cannot select.
  */
-export function WrongNetworkBanner() {
-  const { isConnected } = useAccount();
-  const chainId = useChainId();
+export function SwitchNetworkButton() {
   const { switchChain, isPending } = useSwitchChain();
   const [error, setError] = useState<string | undefined>();
-
-  if (!isConnected || chainId === arc.id) return null;
 
   async function addThenSwitch() {
     setError(undefined);
@@ -110,20 +108,11 @@ export function WrongNetworkBanner() {
   }
 
   return (
-    <Card tone="accent" className="p-4">
-      <p className="font-display text-sm uppercase">Wrong network</p>
-      <p className="mt-1 text-xs leading-snug">
-        Your wallet is on chain {chainId}. WinCut lives on {deployed.chainName} (chain {arc.id}).
-      </p>
-      <div className="mt-3 flex flex-wrap gap-2">
+    <div className="flex flex-col gap-2">
+      <div className="flex gap-2">
         <Button
-          tone="accent"
-          onClick={() =>
-            switchChain(
-              { chainId: arc.id },
-              { onError: () => void addThenSwitch() },
-            )
-          }
+          className="flex-1"
+          onClick={() => switchChain({ chainId: arc.id }, { onError: () => void addThenSwitch() })}
           disabled={isPending}
         >
           {isPending ? "Switching…" : `Switch to ${deployed.chainName}`}
@@ -132,7 +121,23 @@ export function WrongNetworkBanner() {
           Add network
         </Button>
       </div>
-      {error && <p className="mt-2 font-mono text-[10px] leading-snug">{error}</p>}
+      {error && <p className="text-[11px] leading-snug text-loss">{error}</p>}
+    </div>
+  );
+}
+
+export function WrongNetworkBanner() {
+  const { isConnected } = useAccount();
+  const chainId = useChainId();
+  if (!isConnected || chainId === arc.id) return null;
+
+  return (
+    <Card tone="accent" className="p-4">
+      <p className="text-sm font-semibold text-accent">Wrong network</p>
+      <p className="mt-1.5 mb-3 text-xs leading-snug text-text/80">
+        Your wallet is on chain {chainId}. WinCut lives on {deployed.chainName} (chain {arc.id}).
+      </p>
+      <SwitchNetworkButton />
     </Card>
   );
 }
@@ -145,7 +150,7 @@ export function FaucetLink({ className = "" }: { className?: string }) {
       href={FAUCET_URL}
       target="_blank"
       rel="noreferrer"
-      className={`nb-sm nb-press inline-block bg-info px-3 py-2 font-display text-xs uppercase text-white ${className}`}
+      className={`text-sm font-medium text-accent underline-offset-2 hover:underline ${className}`}
     >
       Get test USDC ↗
     </a>
@@ -173,12 +178,14 @@ export function isAlreadyPendingError(error: unknown): boolean {
   return /already pending|already processing/i.test(message);
 }
 
-/// Connect button that actually shows why it failed.
-///
-/// `compact` is for the top bar, which is a 7.5rem slot. Rendering the full
-/// NoWalletBanner card in there wrapped every line to a single word at 390px
-/// ("NO WALLET / FOUND", "INSTALL / METAMASK") and repeated a card the page
-/// body was already showing. The bar gets a link; the page keeps the card.
+/**
+ * Connect button that actually shows why it failed.
+ *
+ * `compact` is for the top bar, which is a narrow slot. Rendering the full
+ * NoWalletBanner card in there wrapped every line to a single word at 390px
+ * and repeated a card the page body was already showing. The bar gets a link;
+ * the page keeps the card.
+ */
 export function ConnectCta({
   label = "Connect wallet",
   compact = false,
@@ -197,7 +204,7 @@ export function ConnectCta({
           href="https://metamask.io/download/"
           target="_blank"
           rel="noreferrer"
-          className="nb-sm nb-press block whitespace-nowrap bg-white px-3 py-2 text-center font-display text-xs uppercase"
+          className="tap flex items-center justify-center rounded-btn border border-border bg-surface px-3 text-xs font-semibold whitespace-nowrap transition-colors hover:bg-elevated"
         >
           Get wallet ↗
         </a>
@@ -228,20 +235,19 @@ export function ConnectCta({
     return (
       <div className="flex flex-col gap-1">
         <Button
-          tone="accent"
-          className="w-full px-2 py-2 text-xs"
+          className="w-full px-3 text-xs"
           disabled={waiting || connectors.length === 0}
           onClick={() => connect({ connector: connectors[0] })}
         >
           {waiting ? "Waiting…" : label}
         </Button>
         {waiting && (
-          <p className="font-mono text-[9px] leading-tight text-ink/70">{WALLET_PENDING_MESSAGE}</p>
+          <p className="text-[10px] leading-tight text-secondary">{WALLET_PENDING_MESSAGE}</p>
         )}
         {alreadyPending && (
           <button
             onClick={retry}
-            className="nb-sm nb-press bg-white px-2 py-1 font-display text-[10px] uppercase"
+            className="rounded-btn border border-border bg-elevated px-2 py-1 text-[10px] font-semibold"
           >
             Retry
           </button>
@@ -253,8 +259,7 @@ export function ConnectCta({
   return (
     <div className="flex flex-col gap-2">
       <Button
-        tone="accent"
-        className="w-full py-4 text-lg"
+        className="w-full py-3.5 text-base"
         disabled={waiting || connectors.length === 0}
         onClick={() => connect({ connector: connectors[0] })}
       >
@@ -262,9 +267,9 @@ export function ConnectCta({
       </Button>
 
       {waiting && (
-        <p className="nb-sm bg-brand p-2 font-mono text-[11px] leading-snug">
-          {WALLET_PENDING_MESSAGE}
-        </p>
+        <Card tone="accent" className="px-3 py-2">
+          <p className="text-xs leading-snug text-accent">{WALLET_PENDING_MESSAGE}</p>
+        </Card>
       )}
 
       {alreadyPending && (
@@ -274,9 +279,9 @@ export function ConnectCta({
       )}
 
       {error && !alreadyPending && (
-        <p className="nb-sm bg-loss p-2 font-mono text-[10px] leading-snug text-white">
-          {error.message}
-        </p>
+        <Card tone="loss" className="px-3 py-2">
+          <p className="text-[11px] leading-snug break-words text-loss">{error.message}</p>
+        </Card>
       )}
     </div>
   );
