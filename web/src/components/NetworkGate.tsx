@@ -187,6 +187,7 @@ export function ConnectCta({
   compact?: boolean;
 }) {
   const { connect, connectors, isPending, error, reset } = useConnect();
+  const { status } = useAccount();
   const has = useHasInjected();
 
   if (has === false) {
@@ -210,7 +211,11 @@ export function ConnectCta({
   // ("Request of type 'wallet_requestPermissions' already pending for origin
   // ...") reads like one, so it gets the same wording as a normal wait.
   const alreadyPending = isAlreadyPendingError(error);
-  const waiting = isPending || alreadyPending;
+  // useConnect's isPending is per hook instance, so the copy in the top bar
+  // stayed live while the one in the page body was mid-request -- two Connect
+  // buttons, one of them clickable, both driving the same wallet. The account
+  // status is config-wide, so both instances see the request.
+  const waiting = isPending || status === "connecting" || alreadyPending;
 
   function retry() {
     // The old error has to be cleared first, or wagmi keeps reporting the
