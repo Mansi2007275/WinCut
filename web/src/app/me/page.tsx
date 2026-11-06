@@ -2,37 +2,42 @@
 
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useAccount, usePublicClient, useWalletClient } from "wagmi";
+import { useAccount, useBalance, usePublicClient, useWalletClient } from "wagmi";
 import Link from "next/link";
 import { Page } from "@/components/Shell";
 import {
   AddressLink,
+  Avatar,
   Badge,
   Button,
   Card,
   Empty,
   ErrorBox,
+  Money,
   Row,
+  SectionHeading,
   SkeletonRows,
   TxLink,
 } from "@/components/ui";
 import { ConnectCta, FaucetLink } from "@/components/NetworkGate";
 import { useToast } from "@/components/Toast";
-import { useCoins, useAccountState, useTrades } from "@/lib/data";
-import { addr, isDeployed } from "@/lib/chain";
+import { useAccountState, useCoins, useEarnings, useTrades } from "@/lib/data";
+import { addr, isDeployed, QUOTE } from "@/lib/chain";
 import { winCutHookAbi } from "@/config/abis";
 import { inviteLink } from "@/lib/referral";
 import { reason } from "@/components/TradePanel";
-import { usd, coins as fmtCoins, price as fmtPrice } from "@/lib/format";
+import { usd, coins as fmtCoins, price as fmtPrice, short } from "@/lib/format";
 
 export default function MePage() {
   const { address, isConnected } = useAccount();
   const client = usePublicClient();
   const { data: wallet } = useWalletClient();
+  const { data: bal } = useBalance({ address });
 
   const acct = useAccountState(address);
   const coinsQ = useCoins();
   const trades = useTrades();
+  const earnings = useEarnings(address);
 
   const toast = useToast();
   const [status, setStatus] = useState<"idle" | "pending" | "confirmed" | "failed">("idle");
@@ -44,7 +49,11 @@ export default function MePage() {
   const stats = useMemo(() => {
     if (!trades.data || !address) return undefined;
     const mine = trades.data.filter((t) => t.trader.toLowerCase() === address.toLowerCase());
-    let realised = 0n, feesPaid = 0n, wins = 0, exits = 0, volume = 0n;
+    let realised = 0n,
+      feesPaid = 0n,
+      wins = 0,
+      exits = 0,
+      volume = 0n;
     for (const t of mine) {
       if (t.kind !== "sell") continue;
       exits += 1;
@@ -62,7 +71,11 @@ export default function MePage() {
     if (!wallet || !client) return;
     setStatus("pending");
     setError(undefined);
-    const id = toast.push({ kind: "pending", title: "Claiming earnings", detail: "Approve in your wallet" });
+    const id = toast.push({
+      kind: "pending",
+      title: "Claiming earnings",
+      detail: "Approve in your wallet",
+    });
     try {
       const h = await wallet.writeContract({
         address: addr.hook,
@@ -76,8 +89,14 @@ export default function MePage() {
       const r = await client.waitForTransactionReceipt({ hash: h });
       if (r.status !== "success") throw new Error("claim reverted");
       setStatus("confirmed");
-      toast.update(id, { kind: "confirmed", title: "Earnings claimed", detail: undefined, hash: h });
+      toast.update(id, {
+        kind: "confirmed",
+        title: "Earnings claimed",
+        detail: undefined,
+        hash: h,
+      });
       acct.refetch();
+      earnings.refetch();
     } catch (e) {
       setStatus("failed");
       const msg = reason(e);
@@ -108,41 +127,62 @@ export default function MePage() {
       </Page>
     );
 
+  const claimable = acct.data?.claimable ?? 0n;
+  const credit = acct.data?.lossCredit ?? 0n;
+
   return (
     <Page>
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <h1 className="text-2xl uppercase leading-none">You</h1>
-          <p className="mt-1 break-all font-mono text-xs">{address}</p>
-          <p className="mt-1 flex gap-3">
-            <AddressLink address={address} label="explorer ↗" className="text-[10px]" />
-            <Link href={`/trader/${address}`} className="font-mono text-[10px] underline">
-              public profile ↗
-            </Link>
+      {/* -------------------------------------------------- portfolio */}
+      <Card className="p-4">
+        <div className="flex items-center gap-3">
+          <Avatar address={address} size={40} />
+          <div className="min-w-0 flex-1">
+            <p className="num truncate text-sm font-semibold">{short(address)}</p>
+            <p className="mt-0.5 flex gap-3 text-[11px]">
+              <AddressLink address={address} label="explorer ↗" />
+              <Link
+                href={`/trader/${address}`}
+                className="text-accent underline-offset-2 hover:underline"
+              >
+                public profile ↗
+              </Link>
+            </p>
+          </div>
+        </div>
+        <div className="mt-3 border-t border-border pt-3">
+          <p className="text-xs text-secondary">Cash · {QUOTE.symbol}</p>
+          <p className="num mt-1 text-[28px] leading-none font-semibold">
+            <Money value={bal?.value} />
           </p>
         </div>
-      </div>
+      </Card>
 
       {acct.isLoading && <SkeletonRows rows={2} height="h-20" />}
       {acct.error && <ErrorBox title="Cannot read your account" detail={String(acct.error)} />}
 
-      {/* ---- realised performance ---- */}
+      {/* ------------------------------------------ realised performance */}
       {stats && (
-        <Card tone={stats.realised >= 0n ? "profit" : "surface"} className="p-4">
-          <p className="font-display text-xs uppercase">Realised P&amp;L</p>
+        <Card className="p-4">
+          <p className="text-xs text-secondary">Realised P&amp;L</p>
           <p
-            className={`money text-3xl ${stats.realised >= 0n ? "" : "text-[#d32f45]"}`}
+            className={`num mt-1 text-[28px] leading-none font-semibold ${
+              stats.realised > 0n ? "text-profit" : stats.realised < 0n ? "text-loss" : "text-text"
+            }`}
           >
             {usd(stats.realised, { sign: true })}
           </p>
-          <div className="mt-2 border-t-3 border-ink pt-2">
+          <div className="mt-3 border-t border-border pt-2">
             <Row label="Exits" value={String(stats.exits)} />
             <Row
               label="Win rate"
               value={stats.exits ? `${Math.round((stats.wins / stats.exits) * 100)}%` : "—"}
             />
             <Row label="Fees you paid WinCut" value={usd(stats.feesPaid)} />
-            <Row label="A 0.5% app would have taken" value={usd(stats.volume * 50n / 10000n)} tone="muted" />
+            <Row
+              label="A 0.5% app would have taken"
+              value={usd((stats.volume * 50n) / 10_000n)}
+              tone="muted"
+            />
             <Row
               label="Saved by WinCut"
               value={usd(stats.saved, { sign: true })}
@@ -153,33 +193,36 @@ export default function MePage() {
         </Card>
       )}
 
-      {/* ---- loss credit ---- */}
-      <Card tone={(acct.data?.lossCredit ?? 0n) > 0n ? "accent" : "surface"} className="p-4">
-        <p className={`font-display text-xs uppercase ${(acct.data?.lossCredit ?? 0n) > 0n ? "text-white" : ""}`}>
-          Loss credit
-        </p>
-        <p className={`money text-2xl ${(acct.data?.lossCredit ?? 0n) > 0n ? "text-white" : ""}`}>
-          {usd(acct.data?.lossCredit ?? 0n)}
-        </p>
-        <p className={`mt-1 text-[11px] ${(acct.data?.lossCredit ?? 0n) > 0n ? "text-white/85" : "text-muted"}`}>
-          {(acct.data?.lossCredit ?? 0n) > 0n
+      {/* ------------------------------------------------- loss credit */}
+      <Card tone={credit > 0n ? "accent" : "surface"} className="p-4">
+        <p className={`text-xs ${credit > 0n ? "text-accent" : "text-secondary"}`}>Loss credit</p>
+        <p className="num mt-1 text-2xl font-semibold">{usd(credit)}</p>
+        <p className="mt-1 text-[11px] leading-snug text-secondary">
+          {credit > 0n
             ? "Your next profit up to this amount is charged nothing."
             : "Losses bank a credit here that offsets future fees."}
         </p>
       </Card>
 
-      {/* ---- claimable ---- */}
-      <Card tone={(acct.data?.claimable ?? 0n) > 0n ? "accent" : "surface"} className="p-4">
-        <p className="font-display text-xs uppercase">Claimable earnings</p>
-        <p className="money text-3xl">{usd(acct.data?.claimable ?? 0n)}</p>
-        <p className="mt-1 text-[11px] text-ink/70">
-          Read directly from the hook. Earned when people who copied you, or whom
-          you referred, exit at a profit.
+      {/* --------------------------------------------------- claimable */}
+      <Card tone={claimable > 0n ? "profit" : "surface"} className="p-4">
+        <p className={`text-xs ${claimable > 0n ? "text-profit" : "text-secondary"}`}>
+          Claimable earnings
         </p>
+        <p className="num mt-1 text-[28px] leading-none font-semibold">{usd(claimable)}</p>
+        <p className="mt-1.5 text-[11px] leading-snug text-secondary">
+          Read directly from the hook. Earned when people who copied you, or whom you referred,
+          exit at a profit.
+        </p>
+        {earnings.data && earnings.data.total > 0n && (
+          <p className="num mt-1 text-[11px] text-secondary">
+            Paid to you in total so far: {usd(earnings.data.total)} across {earnings.data.payouts}{" "}
+            exit{earnings.data.payouts === 1 ? "" : "s"}.
+          </p>
+        )}
         <Button
           onClick={claim}
-          disabled={(acct.data?.claimable ?? 0n) === 0n || status === "pending"}
-          tone="accent"
+          disabled={claimable === 0n || status === "pending"}
           className="mt-3 w-full"
         >
           {status === "pending" ? "Claiming…" : "Claim"}
@@ -188,36 +231,39 @@ export default function MePage() {
 
       {error && <ErrorBox title="Claim failed" detail={error} />}
       {status === "confirmed" && hash && (
-        <div className="nb-sm bg-white p-2 text-center">
-          <TxLink hash={hash} />
-        </div>
+        <Card className="p-2 text-center">
+          <TxLink hash={hash}>View the claim on the explorer ↗</TxLink>
+        </Card>
       )}
 
-      {/* ---- invite ---- */}
+      {/* ------------------------------------------------------ invite */}
       <Card className="p-4">
-        <p className="font-display text-xs uppercase">Your invite link</p>
-        <p className="mt-1 text-[11px] leading-snug text-muted">
+        <p className="text-sm font-semibold">Your invite link</p>
+        <p className="mt-1 text-[11px] leading-snug text-secondary">
           You earn 20% of the fee whenever someone you invited exits at a profit. If they lose,
           you earn nothing — there is no fee to split.
         </p>
-        <Button tone="accent" className="mt-3 w-full" onClick={shareInvite}>
-          {copied ? "Link copied" : "Copy invite link"}
+        <Button tone="elevated" className="mt-3 w-full" onClick={shareInvite}>
+          {copied ? "Link copied ✓" : "Copy invite link"}
         </Button>
-        <p className="mt-2 break-all font-mono text-[10px] text-muted">{inviteLink(address)}</p>
+        <p className="mt-2 text-[11px] break-all text-secondary">{inviteLink(address)}</p>
       </Card>
 
-      {/* ---- positions ---- */}
-      <h2 className="mt-2 text-lg uppercase">Positions</h2>
-      {coinsQ.isLoading && <SkeletonRows rows={2} height="h-20" />}
-      {coinsQ.data?.map((c) => (
-        <PositionCard key={c.address} coin={c} account={address!} />
-      ))}
-      {isDeployed && coinsQ.data?.length === 0 && (
-        <Empty
-          title="No coins yet. Be the first."
-          hint="Launch one and your position shows up here."
-        />
-      )}
+      {/* --------------------------------------------------- positions */}
+      <section className="flex flex-col gap-2">
+        <SectionHeading>Positions</SectionHeading>
+        {coinsQ.isLoading && <SkeletonRows rows={2} height="h-20" />}
+        {coinsQ.data?.map((c) => (
+          <PositionCard key={c.address} coin={c} account={address!} />
+        ))}
+        {isDeployed && coinsQ.data?.length === 0 && (
+          <Empty
+            title="No coins yet. Be the first."
+            hint="Launch one and your position shows up here."
+          />
+        )}
+      </section>
+
       <div className="flex justify-center">
         <FaucetLink />
       </div>
@@ -241,27 +287,41 @@ function PositionCard({
   const avg = amount > 0n ? (cost * 10n ** 18n) / amount : 0n;
 
   return (
-    <Card className="p-4">
-      <button className="flex w-full items-start justify-between gap-2 text-left" onClick={() => setOpen(!open)}>
-        <div>
-          <p className="font-display text-base">{coin.symbol}</p>
-          <p className="font-mono text-[10px] text-muted">{fmtCoins(amount)} held</p>
+    <Card className="p-3">
+      <button
+        className="tap flex w-full items-center gap-3 text-left"
+        onClick={() => setOpen(!open)}
+        aria-expanded={open}
+      >
+        <Avatar address={coin.address} size={32} />
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-semibold">{coin.symbol}</p>
+          <p className="num mt-0.5 text-[11px] text-secondary">{fmtCoins(amount)} held</p>
         </div>
-        <div className="text-right">
-          <p className="money text-lg">{usd(cost)}</p>
-          <p className="text-[10px] text-muted">cost basis</p>
+        <div className="shrink-0 text-right">
+          <p className="num text-sm font-semibold">{usd(cost)}</p>
+          <p className="text-[10px] text-secondary">cost basis</p>
         </div>
+        <span className="shrink-0 text-secondary">{open ? "▴" : "▾"}</span>
       </button>
 
       {open && (
-        <div className="mt-3 border-t-3 border-ink pt-2">
+        <div className="mt-3 border-t border-border pt-2">
           <Row label="Amount" value={fmtCoins(amount)} />
           <Row label="Total cost" value={usd(cost)} />
           <Row label="Avg cost / coin" value={fmtPrice(Number(avg) / 1e18)} />
-          <Badge>tracked by the hook</Badge>
-          <p className="mt-2 font-mono text-[10px] leading-snug text-muted">
-            Only coins bought through WinCut are tracked. Airdropped or transferred
-            coins carry no basis and are never charged a fee.
+          <div className="mt-2 flex items-center gap-2">
+            <Badge>tracked by the hook</Badge>
+            <Link
+              href={`/coin/${coin.address}`}
+              className="text-[11px] text-accent underline-offset-2 hover:underline"
+            >
+              Trade ↗
+            </Link>
+          </div>
+          <p className="mt-2 text-[11px] leading-snug text-secondary">
+            Only coins bought through WinCut are tracked. Airdropped or transferred coins carry no
+            basis and are never charged a fee.
           </p>
         </div>
       )}
