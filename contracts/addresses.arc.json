@@ -67,6 +67,16 @@
   "testnet": {
     "chainId": 5042002,
     "rpc": "https://rpc.testnet.arc.io",
-    "note": "RPC is live and returns chain id 5042002, but a v4 deployment there is UNCONFIRMED. Develop against an Anvil fork of mainnet instead."
+    "verifiedAt": "2026-11-06",
+    "note": "CONFIRMED: Uniswap v4 is deployed on Arc testnet at the SAME addresses as mainnet. Verified by eth_getCode plus a live msgSender() call.",
+    "contracts": {
+      "PoolManager": "0x8366a39CC670B4001A1121B8F6A443A643e40951",
+      "UniversalRouter": "0x4fcA4a51Ab4F23A7447b3284fBd7D73289A89Fb1",
+      "PositionManager": "0x6049c9a0e26405C0985f9E3685C87d0aE917f82B",
+      "Permit2": "0x000000000022D473030F116dDEE9F6B43aC78BA3",
+      "usdcErc20Interface": "0x3600000000000000000000000000000000000000"
+    },
+    "bytecodeSizes": { "PoolManager": 24009, "UniversalRouter": 24546, "PositionManager": 23877, "Permit2": 9152 },
+    "recommendation": "Deploy here for Arc Studio: free test USDC, real v4 contracts, real addresses."
   }
 }

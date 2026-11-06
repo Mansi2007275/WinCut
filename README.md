@@ -271,7 +271,7 @@ Forks Arc mainnet, deploys at a mined address, funds clean undelegated wallets, 
 cd web && npm run dev
 ```
 
-> **Why fork mainnet instead of using Arc testnet?** The testnet RPC is live (chain 5042002) but has **no confirmed v4 deployment**. A mainnet fork is the only way to work against the real PoolManager and the real Universal Router.
+> **Arc testnet also works.** Verified 2026-11-06: Uniswap v4 is fully deployed on Arc testnet (chain 5042002) at the **same addresses as mainnet** — PoolManager, Universal Router (with a working `msgSender()`), PositionManager and Permit2 all respond. So a real testnet deployment is possible with free test USDC, and a mainnet fork is only needed for offline work.
 
 > **EIP-7702 warning.** Every well-known test address carries a delegation on Arc mainnet (`0xef0100…` → a sweeper that forwards any native USDC it receives). A fork inherits it, so anvil's default accounts must never hold demo funds. `dev.sh` derives project-specific undelegated wallets and asserts `code.length == 0` before funding them. **Never fund an anvil default address on Arc mainnet — it will be swept instantly.**
 
