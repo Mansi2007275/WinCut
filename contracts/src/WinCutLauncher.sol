@@ -62,9 +62,12 @@ contract WinCutLauncher is IUnlockCallback {
         uint160 sqrtPriceX96
     );
 
+    event QuoteDustRefunded(address indexed to, uint256 amount);
+
     error OnlyPoolManager();
     error ZeroAmount();
     error WrongMsgValue();
+    error RefundFailed();
 
     constructor(IPoolManager _pm, WinCutHook _hook) {
         poolManager = _pm;
@@ -105,6 +108,12 @@ contract WinCutLauncher is IUnlockCallback {
         uint256 initialSupply
     ) external payable returns (address coinAddr, PoolId id) {
         if (initialQuote == 0 || initialSupply == 0) revert ZeroAmount();
+
+        // Snapshot what was already here so we only ever refund THIS launch.
+        uint256 preExisting = QUOTE.isAddressZero()
+            ? address(this).balance - msg.value
+            : IERC20(Currency.unwrap(QUOTE)).balanceOf(address(this));
+
         _collectQuote(initialQuote);
 
         coinAddr = address(new WinCutCoin(name, symbol, metadataURI, initialSupply, msg.sender));
@@ -115,9 +124,34 @@ contract WinCutLauncher is IUnlockCallback {
         launches[id] = Launch(coinAddr, msg.sender, initialQuote, initialSupply);
         allCoins.push(coinAddr);
 
+        // modifyLiquidity consumes slightly less than the amounts supplied,
+        // because liquidity is rounded down. Refund that remainder to the
+        // creator: it is their capital and the launcher has no way to spend it.
+        //
+        // Leftover COINS are deliberately NOT refunded. They stay locked here
+        // forever alongside the seed LP, so a creator can never walk away with
+        // free supply.
+        _refundQuoteDust(preExisting, msg.sender);
+
         emit CoinLaunched(
             coinAddr, msg.sender, id, name, symbol, metadataURI, initialQuote, initialSupply, sqrtPriceX96
         );
+    }
+
+    function _refundQuoteDust(uint256 preExisting, address to) internal {
+        uint256 held = QUOTE.isAddressZero()
+            ? address(this).balance
+            : IERC20(Currency.unwrap(QUOTE)).balanceOf(address(this));
+        if (held <= preExisting) return;
+
+        uint256 dust = held - preExisting;
+        if (QUOTE.isAddressZero()) {
+            (bool ok,) = payable(to).call{value: dust}("");
+            if (!ok) revert RefundFailed();
+        } else {
+            IERC20(Currency.unwrap(QUOTE)).transfer(to, dust);
+        }
+        emit QuoteDustRefunded(to, dust);
     }
 
     function _collectQuote(uint256 amount) internal {
