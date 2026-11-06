@@ -160,29 +160,28 @@ export function PriceChart({
     chart.current?.timeScale().fitContent();
   }, [data, stroke]);
 
-  if (loading && !series?.length) {
-    return <Skeleton className={`w-full rounded-card`} />;
-  }
+  const empty = !series?.length;
 
-  if (!series?.length) {
-    return (
-      <div
-        className="flex items-center justify-center rounded-card border border-border bg-surface text-xs text-secondary"
-        style={{ height }}
-      >
-        No swaps recorded yet
-      </div>
-    );
-  }
-
+  // The container is ALWAYS rendered. Returning a skeleton instead of it while
+  // the series loads left `box.current` null when the mount effect ran, so
+  // createChart was never called and the chart never appeared once the data
+  // arrived -- which is every time, because the data always arrives after the
+  // first paint. The loading and empty states are drawn over the container
+  // rather than in place of it.
   return (
     <div
-      ref={box}
+      className="relative w-full overflow-hidden rounded-card border border-border bg-surface"
       style={{ height }}
-      className="w-full overflow-hidden rounded-card border border-border bg-surface"
       onPointerLeave={() => hover.current?.(undefined)}
       role="img"
-      aria-label={`Price history, latest ${fmtPrice(series.at(-1)?.price ?? 0)}`}
-    />
+      aria-label={`Price history, latest ${fmtPrice(series?.at(-1)?.price ?? 0)}`}
+    >
+      <div ref={box} className="absolute inset-0" />
+      {empty && (
+        <div className="absolute inset-0 flex items-center justify-center text-xs text-secondary">
+          {loading ? <Skeleton className="h-full w-full" /> : "No swaps recorded yet"}
+        </div>
+      )}
+    </div>
   );
 }
