@@ -1,22 +1,14 @@
 import type { Metadata, Viewport } from "next";
-import { Archivo_Black, Space_Grotesk, JetBrains_Mono } from "next/font/google";
+import { Inter } from "next/font/google";
 import "./globals.css";
 import { Providers } from "./providers";
 
-const display = Archivo_Black({
-  weight: "400",
+/// One family everywhere. Inter's tabular figures are what make a column of
+/// prices line up, and `cv05`/`ss01` give the single-storey l and a that keep
+/// an address like 0x1a1l readable.
+const inter = Inter({
   subsets: ["latin"],
-  variable: "--font-archivo",
-  display: "swap",
-});
-const sans = Space_Grotesk({
-  subsets: ["latin"],
-  variable: "--font-grotesk",
-  display: "swap",
-});
-const mono = JetBrains_Mono({
-  subsets: ["latin"],
-  variable: "--font-jetbrains",
+  variable: "--font-inter",
   display: "swap",
 });
 
@@ -30,13 +22,14 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   maximumScale: 1,
-  themeColor: "#FFE600",
+  themeColor: "#0B0E11",
+  colorScheme: "dark",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
-      <body className={`${display.variable} ${sans.variable} ${mono.variable} antialiased`}>
+    <html lang="en" className="dark">
+      <body className={`${inter.variable} antialiased`}>
         <Providers>{children}</Providers>
       </body>
     </html>

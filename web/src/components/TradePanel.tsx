@@ -340,7 +340,7 @@ export function TradePanel({
               <Skeleton className="h-3 w-2/3" />
             </Card>
           ) : quote ? (
-            <Card tone={quote.fee > 0n ? "brand" : "profit"} className="p-4">
+            <Card tone={quote.fee > 0n ? "accent" : "profit"} className="p-4">
               <p className="mb-2 font-display text-sm uppercase">
                 {quote.fee > 0n ? "You profited" : "No profit, no fee"}
               </p>
@@ -353,14 +353,14 @@ export function TradePanel({
                 />
               )}
               {quote.lossCredit > 0n && (
-                <Row label="Loss credit available" value={usd(quote.lossCredit)} tone="info" />
+                <Row label="Loss credit available" value={usd(quote.lossCredit)} tone="accent" />
               )}
               <div className="my-2 border-t-3 border-ink" />
               <Row
                 label="WinCut fee (10% of profit)"
                 value={usd(quote.fee)}
                 strong
-                tone={quote.fee > 0n ? "ink" : "profit"}
+                tone={quote.fee > 0n ? "text" : "profit"}
               />
               <Row
                 label="A 0.5%-of-volume app would charge"
@@ -412,7 +412,7 @@ export function TradePanel({
         <Button
           onClick={submit}
           disabled={!canSubmit}
-          tone={side === "buy" ? "brand" : "profit"}
+          tone={side === "buy" ? "accent" : "profit"}
           className="w-full py-4 text-lg"
         >
           {busy ? "Confirming…" : side === "buy" ? `Buy ${coin.symbol}` : `Sell ${coin.symbol}`}

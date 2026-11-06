@@ -155,7 +155,7 @@ function CoinScreen() {
       </div>
 
       {pos && pos.amount > 0n && (
-        <Card tone="info" className="p-4 text-white">
+        <Card tone="accent" className="p-4 text-white">
           <p className="mb-1 font-display text-xs uppercase">Your position</p>
           <Row label="Holding" value={`${fmtCoins(pos.amount)} ${coin.symbol}`} />
           <Row label="Cost basis" value={usd(pos.cost)} />
@@ -189,7 +189,7 @@ function CoinScreen() {
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
                       <p className="flex items-center gap-2">
-                        <Badge tone={t.kind === "buy" ? "brand" : win ? "profit" : "white"}>
+                        <Badge tone={t.kind === "buy" ? "accent" : win ? "profit" : "neutral"}>
                           {t.kind}
                         </Badge>
                         <Link href={`/trader/${t.trader}`} className="font-mono text-[11px] underline">

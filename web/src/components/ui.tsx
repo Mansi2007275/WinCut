@@ -1,101 +1,172 @@
 "use client";
 
+import NumberFlow from "@number-flow/react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { explorerAddr, explorerTx } from "@/lib/chain";
+import { formatUnits } from "viem";
+import { explorerAddr, explorerTx, QUOTE } from "@/lib/chain";
 import { short, shorter } from "@/lib/format";
+
+/* ---------------------------------------------------------------- surfaces */
 
 export function Card({
   children,
   className = "",
-  tone = "white",
+  tone = "surface",
 }: {
   children: ReactNode;
   className?: string;
-  tone?: "white" | "brand" | "profit" | "loss" | "info";
+  /// `surface` is the default card. `elevated` is for a card sitting on top of
+  /// another one. The signal tones are dim-tinted fills, never full saturation
+  /// behind text.
+  tone?: "surface" | "elevated" | "profit" | "loss" | "accent" | "bare";
 }) {
   const tones = {
-    white: "bg-white",
-    brand: "bg-brand",
-    profit: "bg-profit",
-    loss: "bg-loss",
-    info: "bg-info",
+    surface: "bg-surface border border-border",
+    elevated: "bg-elevated border border-border",
+    profit: "bg-profit-dim border border-profit/30",
+    loss: "bg-loss-dim border border-loss/30",
+    accent: "bg-accent-dim border border-accent/30",
+    bare: "",
   } as const;
-  return <div className={`nb ${tones[tone]} ${className}`}>{children}</div>;
+  return <div className={`rounded-card ${tones[tone]} ${className}`}>{children}</div>;
 }
+
+/* ----------------------------------------------------------------- buttons */
 
 export function Button({
   children,
   onClick,
   disabled,
-  tone = "brand",
+  tone = "accent",
   className = "",
   type = "button",
+  "aria-label": ariaLabel,
 }: {
   children: ReactNode;
   onClick?: () => void;
   disabled?: boolean;
-  tone?: "brand" | "profit" | "loss" | "white" | "ink";
+  tone?: "accent" | "profit" | "loss" | "elevated" | "ghost";
   className?: string;
   type?: "button" | "submit";
+  "aria-label"?: string;
 }) {
   const tones = {
-    brand: "bg-brand text-ink",
-    profit: "bg-profit text-ink",
-    loss: "bg-loss text-white",
-    white: "bg-white text-ink",
-    ink: "bg-ink text-brand",
+    accent: "bg-accent text-white hover:bg-accent/90",
+    profit: "bg-profit text-[#04150E] hover:bg-profit/90",
+    loss: "bg-loss text-white hover:bg-loss/90",
+    elevated: "bg-elevated text-text border border-border hover:bg-elevated/70",
+    ghost: "bg-transparent text-secondary hover:text-text",
   } as const;
   return (
     <button
       type={type}
       onClick={onClick}
       disabled={disabled}
-      className={`nb nb-press font-display uppercase tracking-tight px-4 py-3 text-base ${tones[tone]} ${className}`}
+      aria-label={ariaLabel}
+      className={`tap rounded-btn px-4 text-sm font-semibold transition-[transform,background-color,opacity] duration-150 active:scale-[0.97] disabled:opacity-40 disabled:active:scale-100 ${tones[tone]} ${className}`}
     >
       {children}
     </button>
   );
 }
 
+/// A small toggle: amount presets, sell percentages, timeframes.
 export function Chip({
   children,
   active,
   onClick,
+  className = "",
 }: {
   children: ReactNode;
   active?: boolean;
   onClick?: () => void;
+  className?: string;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className={`nb-sm nb-press px-3 py-2 text-sm font-bold ${active ? "bg-brand" : "bg-white"}`}
+      aria-pressed={active}
+      className={`tap rounded-btn border px-4 text-sm font-semibold transition-[transform,background-color,border-color] duration-150 active:scale-[0.97] ${
+        active
+          ? "border-accent bg-accent/15 text-accent"
+          : "border-border bg-elevated text-secondary hover:text-text"
+      } ${className}`}
     >
       {children}
     </button>
   );
 }
 
+/* -------------------------------------------------------------------- tabs */
+
+/// Underline tabs. Used where the set can grow past the screen edge, so the
+/// strip scrolls horizontally rather than squeezing.
 export function Tabs<T extends string>({
   options,
   value,
   onChange,
+  className = "",
 }: {
   options: readonly { id: T; label: string }[];
   value: T;
   onChange: (v: T) => void;
+  className?: string;
 }) {
   return (
-    <div className="flex gap-0 border-3 border-ink shadow-[4px_4px_0_#000] bg-white">
-      {options.map((o, i) => (
+    <div
+      role="tablist"
+      className={`no-scrollbar -mx-4 flex gap-1 overflow-x-auto border-b border-border px-4 ${className}`}
+    >
+      {options.map((o) => (
         <button
           key={o.id}
+          role="tab"
+          aria-selected={value === o.id}
           type="button"
           onClick={() => onChange(o.id)}
-          className={`flex-1 font-display uppercase text-sm py-3 ${
-            value === o.id ? "bg-ink text-brand" : "bg-white text-ink"
-          } ${i > 0 ? "border-l-3 border-ink" : ""}`}
+          className={`tap relative shrink-0 px-3 text-sm font-semibold whitespace-nowrap transition-colors duration-150 ${
+            value === o.id ? "text-text" : "text-secondary hover:text-text"
+          }`}
+        >
+          {o.label}
+          {value === o.id && (
+            <span className="absolute inset-x-3 -bottom-px block h-0.5 rounded-full bg-text" />
+          )}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/// Pill segmented control. Used for a fixed pair of views, like the two
+/// leaderboard orderings.
+export function Segmented<T extends string>({
+  options,
+  value,
+  onChange,
+  className = "",
+}: {
+  options: readonly { id: T; label: string }[];
+  value: T;
+  onChange: (v: T) => void;
+  className?: string;
+}) {
+  return (
+    <div
+      role="tablist"
+      className={`flex gap-1 rounded-card border border-border bg-surface p-1 ${className}`}
+    >
+      {options.map((o) => (
+        <button
+          key={o.id}
+          role="tab"
+          aria-selected={value === o.id}
+          type="button"
+          onClick={() => onChange(o.id)}
+          className={`tap flex-1 rounded-btn px-3 text-sm font-semibold transition-colors duration-150 ${
+            value === o.id ? "bg-elevated text-text" : "text-secondary hover:text-text"
+          }`}
         >
           {o.label}
         </button>
@@ -104,78 +175,103 @@ export function Tabs<T extends string>({
   );
 }
 
+/* -------------------------------------------------------------------- rows */
+
 export function Row({
   label,
   value,
-  tone = "ink",
+  tone = "text",
   strong,
 }: {
   label: ReactNode;
   value: ReactNode;
-  tone?: "ink" | "profit" | "loss" | "muted" | "info";
+  tone?: "text" | "profit" | "loss" | "muted" | "accent";
   strong?: boolean;
 }) {
   const tones = {
-    ink: "text-ink",
-    profit: "text-[#00a152]",
-    loss: "text-[#d32f45]",
-    muted: "text-muted",
-    info: "text-[#2b55d4]",
+    text: "text-text",
+    profit: "text-profit",
+    loss: "text-loss",
+    muted: "text-secondary",
+    accent: "text-accent",
   } as const;
   return (
     <div className="flex items-baseline justify-between gap-3 py-1.5">
-      <span className={`text-sm ${strong ? "font-bold" : ""} text-muted`}>{label}</span>
-      <span className={`money ${strong ? "text-lg" : "text-sm"} ${tones[tone]}`}>{value}</span>
+      <span className={`text-sm text-secondary ${strong ? "font-semibold text-text" : ""}`}>
+        {label}
+      </span>
+      <span className={`num ${strong ? "text-lg font-semibold" : "text-sm"} ${tones[tone]}`}>
+        {value}
+      </span>
     </div>
   );
 }
 
+/// The tiny grey uppercase header above a list, e.g. "COIN … PRICE".
+export function ColumnHeader({ children }: { children: ReactNode }) {
+  return (
+    <div className="flex items-center justify-between px-1 pb-2 text-[10px] font-semibold tracking-wider text-secondary uppercase">
+      {children}
+    </div>
+  );
+}
+
+export function SectionHeading({ children, right }: { children: ReactNode; right?: ReactNode }) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <h2 className="text-base font-semibold">{children}</h2>
+      {right}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ states */
+
 export function Loading({ label = "Loading" }: { label?: string }) {
   return (
-    <div className="nb bg-white p-5">
-      <div className="h-3 w-24 bg-ink/10 mb-3" />
-      <div className="h-3 w-full striped bg-ink/5 mb-2" />
-      <div className="h-3 w-2/3 striped bg-ink/5" />
-      <p className="mt-3 text-xs font-bold uppercase text-muted">{label}…</p>
-    </div>
+    <Card className="p-5">
+      <div className="shimmer mb-3 h-3 w-24 rounded" />
+      <div className="shimmer mb-2 h-3 w-full rounded" />
+      <div className="shimmer h-3 w-2/3 rounded" />
+      <p className="mt-3 text-xs text-secondary">{label}…</p>
+    </Card>
   );
 }
 
 export function Empty({ title, hint }: { title: string; hint?: string }) {
   return (
-    <div className="nb bg-white p-6 text-center">
-      <p className="font-display text-lg uppercase">{title}</p>
-      {hint && <p className="mt-2 text-sm text-muted">{hint}</p>}
-    </div>
+    <Card className="p-6 text-center">
+      <p className="text-sm font-semibold">{title}</p>
+      {hint && <p className="mt-2 text-sm text-secondary">{hint}</p>}
+    </Card>
   );
 }
 
 export function ErrorBox({ title = "Something broke", detail }: { title?: string; detail?: string }) {
   return (
-    <div className="nb bg-loss p-5 text-white">
-      <p className="font-display text-lg uppercase">{title}</p>
-      {detail && <p className="mt-2 break-words font-mono text-xs leading-snug">{detail}</p>}
-    </div>
+    <Card tone="loss" className="p-4">
+      <p className="text-sm font-semibold text-loss">{title}</p>
+      {detail && <p className="mt-1.5 text-xs leading-snug break-words text-text/80">{detail}</p>}
+    </Card>
   );
 }
 
 export function Badge({
   children,
-  tone = "white",
+  tone = "neutral",
 }: {
   children: ReactNode;
-  tone?: "white" | "brand" | "profit" | "loss" | "info";
+  tone?: "neutral" | "profit" | "loss" | "accent";
 }) {
   const tones = {
-    white: "bg-white",
-    brand: "bg-brand",
-    profit: "bg-profit",
-    loss: "bg-loss text-white",
-    info: "bg-info text-white",
+    neutral: "bg-elevated text-secondary border-border",
+    profit: "bg-profit/15 text-profit border-profit/30",
+    loss: "bg-loss/15 text-loss border-loss/30",
+    accent: "bg-accent/15 text-accent border-accent/30",
   } as const;
   return (
     <span
-      className={`nb-sm inline-block px-2 py-0.5 text-[10px] font-display uppercase tracking-wide ${tones[tone]}`}
+      className={`inline-block rounded-pill border px-2 py-0.5 text-[10px] font-semibold tracking-wide uppercase ${tones[tone]}`}
     >
       {children}
     </span>
@@ -183,24 +279,29 @@ export function Badge({
 }
 
 export function DumperStamp() {
-  return (
-    <span className="tilt-stamp inline-block bg-loss px-2 py-0.5 text-[10px] font-display uppercase text-white">
-      Dumper
-    </span>
-  );
+  return <Badge tone="loss">Dumper</Badge>;
 }
 
-/// Honesty = followers' PnL relative to the trader's own. A bar that reads at a glance.
+/**
+ * Honesty = followers' PnL relative to the trader's own.
+ *
+ * The scale runs -1 (dumped on followers) through 0 (neutral) to 2 (followers
+ * won bigger than the trader). A null score means there is nothing to divide
+ * yet, which is drawn as an empty track rather than a misleading zero.
+ */
 export function HonestyBar({ score }: { score: number | null }) {
   if (score === null) {
-    return <div className="h-3 w-full border-2 border-ink bg-white" />;
+    return <div className="h-1.5 w-full rounded-pill bg-elevated" />;
   }
   const clamped = Math.max(-1, Math.min(2, score));
   const fill = ((clamped + 1) / 3) * 100;
-  const tone = score < 0 ? "bg-loss" : score < 0.5 ? "bg-brand" : "bg-profit";
+  const tone = score < 0 ? "bg-loss" : score < 0.5 ? "bg-secondary" : "bg-profit";
   return (
-    <div className="h-3 w-full border-2 border-ink bg-white">
-      <div className={`h-full ${tone}`} style={{ width: `${fill}%` }} />
+    <div className="h-1.5 w-full overflow-hidden rounded-pill bg-elevated">
+      <div
+        className={`h-full rounded-pill transition-[width] duration-300 ${tone}`}
+        style={{ width: `${fill}%` }}
+      />
     </div>
   );
 }
@@ -216,17 +317,18 @@ export function TxState({
 }) {
   if (status === "idle") return null;
   const map = {
-    pending: { tone: "bg-info text-white", label: "Transaction pending" },
-    confirmed: { tone: "bg-profit", label: "Confirmed" },
-    failed: { tone: "bg-loss text-white", label: "Failed" },
+    pending: { tone: "accent", label: "Transaction pending" },
+    confirmed: { tone: "profit", label: "Confirmed" },
+    failed: { tone: "loss", label: "Failed" },
   } as const;
   const s = map[status];
+  const text = { accent: "text-accent", profit: "text-profit", loss: "text-loss" }[s.tone];
   return (
-    <div className={`nb-sm ${s.tone} animate-slide p-3`}>
-      <p className="font-display text-xs uppercase">{s.label}</p>
+    <Card tone={s.tone} className="p-3">
+      <p className={`text-xs font-semibold ${text}`}>{s.label}</p>
       {hash && explorer && (
         <a
-          className="mt-1 block break-all font-mono text-[10px] underline"
+          className="mt-1 block text-[10px] break-all text-secondary underline underline-offset-2 hover:text-text"
           href={`${explorer}/tx/${hash}`}
           target="_blank"
           rel="noreferrer"
@@ -234,19 +336,59 @@ export function TxState({
           {hash}
         </a>
       )}
-    </div>
+    </Card>
   );
 }
 
-// ---------------------------------------------------------------- linking
+/* ----------------------------------------------------------------- avatars */
+
+/**
+ * An avatar derived from the address itself.
+ *
+ * Two characters of the address over a hue picked from its own bytes, so the
+ * same wallet is always the same colour. Deliberately NOT a generated human
+ * name: an invented handle makes a stranger's wallet look like an account the
+ * app knows something about, which is a claim the app cannot back.
+ */
+export function Avatar({
+  address,
+  size = 32,
+  className = "",
+}: {
+  address?: string;
+  size?: number;
+  className?: string;
+}) {
+  const clean = (address ?? "").replace(/^0x/, "");
+  const initials = clean.slice(0, 2).toUpperCase() || "··";
+  // Hue from the trailing bytes, which vary more than the leading ones.
+  const seed = parseInt(clean.slice(-6) || "0", 16);
+  const hue = Number.isFinite(seed) ? seed % 360 : 210;
+  return (
+    <span
+      aria-hidden
+      className={`inline-flex shrink-0 items-center justify-center rounded-pill font-semibold ${className}`}
+      style={{
+        width: size,
+        height: size,
+        fontSize: Math.round(size * 0.36),
+        background: `hsl(${hue} 42% 22%)`,
+        color: `hsl(${hue} 70% 72%)`,
+      }}
+    >
+      {initials}
+    </span>
+  );
+}
+
+/* ----------------------------------------------------------------- linking */
 
 /**
  * An address, always linked to the explorer.
  *
- * There are no display names in WinCut. An invented handle makes a stranger's
- * wallet look like an account the app knows something about, which is a claim
- * the app cannot back. A short address that opens the explorer is the honest form,
- * and it is also the form a judge can verify mid-demo.
+ * There are no display names in WinCut. A short address that opens the
+ * explorer is the honest form, and it is also the form a judge can verify
+ * mid-demo.
  */
 export function AddressLink({
   address,
@@ -259,14 +401,14 @@ export function AddressLink({
   label?: string;
   className?: string;
 }) {
-  if (!address) return <span className="text-muted">—</span>;
+  if (!address) return <span className="text-secondary">—</span>;
   return (
     <a
       href={explorerAddr(address)}
       target="_blank"
       rel="noreferrer"
       title={address}
-      className={`font-mono underline decoration-ink/30 hover:decoration-ink ${className}`}
+      className={`text-accent underline-offset-2 hover:underline ${className}`}
     >
       {label ?? (tight ? shorter(address) : short(address))}
     </a>
@@ -281,70 +423,156 @@ export function TxLink({ hash, children }: { hash?: string; children?: ReactNode
       href={explorerTx(hash)}
       target="_blank"
       rel="noreferrer"
-      className="font-mono text-[10px] underline decoration-ink/30 hover:decoration-ink"
+      className="text-[11px] text-accent underline-offset-2 hover:underline"
     >
       {children ?? "view on explorer ↗"}
     </a>
   );
 }
 
-// -------------------------------------------------------------- skeletons
+/* --------------------------------------------------------------- skeletons */
 
 /// A loading placeholder with the same box as the content it replaces, so
 /// nothing shifts when the real data lands.
 export function Skeleton({ className = "h-4 w-full" }: { className?: string }) {
-  return <div className={`animate-pulse bg-ink/10 ${className}`} />;
+  return <div className={`shimmer rounded ${className}`} />;
 }
 
 export function SkeletonRows({ rows = 3, height = "h-16" }: { rows?: number; height?: string }) {
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex flex-col gap-2">
       {Array.from({ length: rows }).map((_, i) => (
-        <div key={i} className={`nb bg-white ${height} p-3`}>
+        <Card key={i} className={`${height} p-3`}>
           <Skeleton className="mb-2 h-3 w-1/3" />
           <Skeleton className="h-3 w-2/3" />
-        </div>
+        </Card>
       ))}
     </div>
   );
 }
 
-// ------------------------------------------------------------------ stats
+/* ------------------------------------------------------------------- stats */
 
 export function StatTile({
   label,
   value,
-  tone = "white",
+  tone = "text",
   sub,
 }: {
   label: string;
   value: ReactNode;
-  tone?: "white" | "brand" | "profit" | "loss";
+  tone?: "text" | "profit" | "loss" | "accent";
   sub?: ReactNode;
 }) {
   const tones = {
-    white: "bg-white",
-    brand: "bg-brand",
-    profit: "bg-profit",
-    loss: "bg-loss text-white",
+    text: "text-text",
+    profit: "text-profit",
+    loss: "text-loss",
+    accent: "text-accent",
   } as const;
   return (
-    <div className={`nb-sm ${tones[tone]} p-3`}>
-      <p className="font-display text-[9px] uppercase tracking-wide opacity-70">{label}</p>
-      <p className="money mt-1 text-base leading-tight">{value}</p>
-      {sub && <p className="mt-0.5 text-[10px] leading-tight opacity-70">{sub}</p>}
-    </div>
+    <Card className="px-3 py-2.5">
+      <p className="text-[10px] font-medium tracking-wide text-secondary uppercase">{label}</p>
+      <p className={`num mt-1 text-base leading-tight font-semibold ${tones[tone]}`}>{value}</p>
+      {sub && <p className="mt-0.5 text-[10px] leading-tight text-secondary">{sub}</p>}
+    </Card>
   );
 }
 
-// --------------------------------------------------------------- count-up
+/* ------------------------------------------------------------ live numbers */
+
+/**
+ * A number that animates between values instead of snapping.
+ *
+ * Every figure here is read from the chain, so it changes under the user
+ * rather than because they did something. Rolling the digits shows which part
+ * moved; snapping just makes the screen look like it reloaded.
+ */
+export function Num({
+  value,
+  prefix = "",
+  suffix = "",
+  decimals = 2,
+  sign = false,
+  className = "",
+}: {
+  value: number;
+  prefix?: string;
+  suffix?: string;
+  decimals?: number;
+  sign?: boolean;
+  className?: string;
+}) {
+  return (
+    <NumberFlow
+      value={value}
+      prefix={prefix}
+      suffix={suffix}
+      format={{
+        minimumFractionDigits: decimals,
+        maximumFractionDigits: decimals,
+        signDisplay: sign ? "always" : "auto",
+      }}
+      className={`num ${className}`}
+    />
+  );
+}
+
+/// The same, for a QUOTE-denominated bigint. Converted through formatUnits so
+/// the decimals always match the deployment's quote currency.
+export function Money({
+  value,
+  decimals = 2,
+  sign = false,
+  className = "",
+}: {
+  value: bigint | undefined;
+  decimals?: number;
+  sign?: boolean;
+  className?: string;
+}) {
+  if (value === undefined) return <span className={`num ${className}`}>—</span>;
+  const n = Number(formatUnits(value, QUOTE.decimals));
+  const negative = n < 0;
+  return (
+    <span className={`num ${className}`}>
+      {negative ? "-" : sign ? "+" : ""}
+      <NumberFlow
+        value={Math.abs(n)}
+        prefix="$"
+        format={{ minimumFractionDigits: decimals, maximumFractionDigits: decimals }}
+      />
+    </span>
+  );
+}
+
+/**
+ * Flashes a value green or red for 300ms when it moves.
+ *
+ * Colour only, no transform, so a list of them cannot cause layout work.
+ * Returns the class to put on the element showing `value`.
+ */
+export function useFlash(value: number | undefined): string {
+  const previous = useRef<number | undefined>(undefined);
+  const [cls, setCls] = useState("");
+  useEffect(() => {
+    if (value === undefined) return;
+    const before = previous.current;
+    previous.current = value;
+    if (before === undefined || before === value) return;
+    setCls(value > before ? "flash-up" : "flash-down");
+    const id = setTimeout(() => setCls(""), 320);
+    return () => clearTimeout(id);
+  }, [value]);
+  return cls;
+}
 
 /**
  * Animates a bigint up to its final value.
  *
- * Steps through in integer arithmetic rather than interpolating a float, so the
- * last frame is exactly the on-chain figure. Respects reduced-motion by jumping
- * straight to the answer.
+ * Steps through in integer arithmetic rather than interpolating a float, so
+ * the last frame is exactly the on-chain figure. Respects reduced-motion by
+ * jumping straight to the answer.
  */
 export function useCountUp(target: bigint, ms = 700): bigint {
   const [v, setV] = useState(0n);
@@ -375,69 +603,23 @@ export function useCountUp(target: bigint, ms = 700): bigint {
   return v;
 }
 
-// --------------------------------------------------------------- confetti
+/* --------------------------------------------------------------- split bar */
 
-/**
- * Confetti on a profitable exit, drawn on a canvas.
- *
- * Hand-rolled rather than pulling in a library: it is thirty lines, it matches
- * the palette, and it self-destructs after one run so it cannot leak a rAF loop
- * across navigations.
- */
-export function Confetti({ run }: { run: boolean }) {
-  const ref = useRef<HTMLCanvasElement | null>(null);
-
-  useEffect(() => {
-    if (!run) return;
-    const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-    if (reduce) return;
-    const canvas = ref.current;
-    const ctx = canvas?.getContext("2d");
-    if (!canvas || !ctx) return;
-
-    const w = (canvas.width = canvas.offsetWidth);
-    const h = (canvas.height = canvas.offsetHeight);
-    const colors = ["#FFE600", "#00E676", "#4D7CFF", "#FF3D57", "#000000"];
-    const bits = Array.from({ length: 70 }, () => ({
-      x: Math.random() * w,
-      y: -20 - Math.random() * h * 0.5,
-      s: 5 + Math.random() * 7,
-      vy: 1.6 + Math.random() * 2.6,
-      vx: -1 + Math.random() * 2,
-      rot: Math.random() * Math.PI,
-      vr: -0.14 + Math.random() * 0.28,
-      c: colors[Math.floor(Math.random() * colors.length)],
-    }));
-
-    let frame = 0;
-    let raf = 0;
-    const tick = () => {
-      frame += 1;
-      ctx.clearRect(0, 0, w, h);
-      for (const b of bits) {
-        b.x += b.vx;
-        b.y += b.vy;
-        b.rot += b.vr;
-        ctx.save();
-        ctx.translate(b.x, b.y);
-        ctx.rotate(b.rot);
-        ctx.fillStyle = b.c;
-        ctx.fillRect(-b.s / 2, -b.s / 2, b.s, b.s * 0.6);
-        ctx.restore();
-      }
-      if (frame < 150) raf = requestAnimationFrame(tick);
-      else ctx.clearRect(0, 0, w, h);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [run]);
-
-  if (!run) return null;
+/// The 50/20/30 fee split, drawn as one bar. The widths come from the actual
+/// cut amounts in the FeeSplit event, not from the constants, so a rounding
+/// remainder in the treasury share shows up rather than being hidden.
+export function SplitBar({ parts }: { parts: { value: bigint; className: string }[] }) {
+  const total = parts.reduce((a, p) => a + p.value, 0n);
+  if (total === 0n) return null;
   return (
-    <canvas
-      ref={ref}
-      aria-hidden
-      className="pointer-events-none fixed inset-0 z-[60] h-full w-full"
-    />
+    <div className="flex h-1.5 w-full overflow-hidden rounded-pill bg-elevated">
+      {parts.map((p, i) => (
+        <div
+          key={i}
+          className={p.className}
+          style={{ width: `${(Number(p.value) / Number(total)) * 100}%` }}
+        />
+      ))}
+    </div>
   );
 }

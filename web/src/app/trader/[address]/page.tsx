@@ -109,7 +109,7 @@ function TraderScreen() {
           </p>
         </div>
         <div className="flex shrink-0 flex-col items-end gap-1">
-          {isMe && <Badge tone="brand">you</Badge>}
+          {isMe && <Badge tone="accent">you</Badge>}
           {p?.isDumper && <DumperStamp />}
           {p && !p.isDumper && p.followers.length > 0 && p.followersPnl > 0n && (
             <Badge tone="profit">honest</Badge>
@@ -125,7 +125,7 @@ function TraderScreen() {
       ) : (
         <>
           {/* ------------------------- honesty ------------------------- */}
-          <Card tone={p.isDumper ? "loss" : "white"} className={`p-4 ${p.isDumper ? "text-white" : ""}`}>
+          <Card tone={p.isDumper ? "loss" : "surface"} className={`p-4 ${p.isDumper ? "text-white" : ""}`}>
             <p className="font-display text-sm uppercase">Followers&apos; profit</p>
             <p className="mt-1 text-xs leading-snug opacity-80">
               The only number that matters here: did the people who copied this wallet make money?
@@ -172,7 +172,7 @@ function TraderScreen() {
 
           {/* --------------------------- copy --------------------------- */}
           {!isMe && (
-            <Card tone="brand" className="p-4">
+            <Card tone="accent" className="p-4">
               <p className="font-display text-sm uppercase">Copy this trader</p>
               <p className="mt-1 text-xs leading-snug">
                 Your buy records them on chain. They earn 50% of the fee — but only out of your
@@ -187,7 +187,7 @@ function TraderScreen() {
                   </Link>
                 ))}
               </div>
-              <Button tone="white" className="mt-3 w-full" onClick={share}>
+              <Button tone="elevated" className="mt-3 w-full" onClick={share}>
                 {copied ? "Link copied" : "Copy invite link"}
               </Button>
               <p className="mt-2 break-all font-mono text-[10px] text-ink/60">
@@ -207,7 +207,7 @@ function TraderScreen() {
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
                         <p className="flex items-center gap-2">
-                          <Badge tone={t.kind === "buy" ? "brand" : "white"}>{t.kind}</Badge>
+                          <Badge tone={t.kind === "buy" ? "accent" : "neutral"}>{t.kind}</Badge>
                           {coin ? (
                             <Link
                               href={`/coin/${coin.address}`}

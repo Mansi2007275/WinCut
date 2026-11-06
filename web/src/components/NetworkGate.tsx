@@ -110,14 +110,14 @@ export function WrongNetworkBanner() {
   }
 
   return (
-    <Card tone="brand" className="p-4">
+    <Card tone="accent" className="p-4">
       <p className="font-display text-sm uppercase">Wrong network</p>
       <p className="mt-1 text-xs leading-snug">
         Your wallet is on chain {chainId}. WinCut lives on {deployed.chainName} (chain {arc.id}).
       </p>
       <div className="mt-3 flex flex-wrap gap-2">
         <Button
-          tone="ink"
+          tone="accent"
           onClick={() =>
             switchChain(
               { chainId: arc.id },
@@ -128,7 +128,7 @@ export function WrongNetworkBanner() {
         >
           {isPending ? "Switching…" : `Switch to ${deployed.chainName}`}
         </Button>
-        <Button tone="white" onClick={() => void addThenSwitch()}>
+        <Button tone="elevated" onClick={() => void addThenSwitch()}>
           Add network
         </Button>
       </div>
@@ -228,7 +228,7 @@ export function ConnectCta({
     return (
       <div className="flex flex-col gap-1">
         <Button
-          tone="ink"
+          tone="accent"
           className="w-full px-2 py-2 text-xs"
           disabled={waiting || connectors.length === 0}
           onClick={() => connect({ connector: connectors[0] })}
@@ -253,7 +253,7 @@ export function ConnectCta({
   return (
     <div className="flex flex-col gap-2">
       <Button
-        tone="ink"
+        tone="accent"
         className="w-full py-4 text-lg"
         disabled={waiting || connectors.length === 0}
         onClick={() => connect({ connector: connectors[0] })}
@@ -268,7 +268,7 @@ export function ConnectCta({
       )}
 
       {alreadyPending && (
-        <Button tone="white" className="w-full" onClick={retry}>
+        <Button tone="elevated" className="w-full" onClick={retry}>
           Retry
         </Button>
       )}

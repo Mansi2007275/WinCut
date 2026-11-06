@@ -128,7 +128,7 @@ export default function MePage() {
 
       {/* ---- realised performance ---- */}
       {stats && (
-        <Card tone={stats.realised >= 0n ? "profit" : "white"} className="p-4">
+        <Card tone={stats.realised >= 0n ? "profit" : "surface"} className="p-4">
           <p className="font-display text-xs uppercase">Realised P&amp;L</p>
           <p
             className={`money text-3xl ${stats.realised >= 0n ? "" : "text-[#d32f45]"}`}
@@ -154,7 +154,7 @@ export default function MePage() {
       )}
 
       {/* ---- loss credit ---- */}
-      <Card tone={(acct.data?.lossCredit ?? 0n) > 0n ? "info" : "white"} className="p-4">
+      <Card tone={(acct.data?.lossCredit ?? 0n) > 0n ? "accent" : "surface"} className="p-4">
         <p className={`font-display text-xs uppercase ${(acct.data?.lossCredit ?? 0n) > 0n ? "text-white" : ""}`}>
           Loss credit
         </p>
@@ -169,7 +169,7 @@ export default function MePage() {
       </Card>
 
       {/* ---- claimable ---- */}
-      <Card tone={(acct.data?.claimable ?? 0n) > 0n ? "brand" : "white"} className="p-4">
+      <Card tone={(acct.data?.claimable ?? 0n) > 0n ? "accent" : "surface"} className="p-4">
         <p className="font-display text-xs uppercase">Claimable earnings</p>
         <p className="money text-3xl">{usd(acct.data?.claimable ?? 0n)}</p>
         <p className="mt-1 text-[11px] text-ink/70">
@@ -179,7 +179,7 @@ export default function MePage() {
         <Button
           onClick={claim}
           disabled={(acct.data?.claimable ?? 0n) === 0n || status === "pending"}
-          tone="ink"
+          tone="accent"
           className="mt-3 w-full"
         >
           {status === "pending" ? "Claiming…" : "Claim"}
@@ -200,7 +200,7 @@ export default function MePage() {
           You earn 20% of the fee whenever someone you invited exits at a profit. If they lose,
           you earn nothing — there is no fee to split.
         </p>
-        <Button tone="brand" className="mt-3 w-full" onClick={shareInvite}>
+        <Button tone="accent" className="mt-3 w-full" onClick={shareInvite}>
           {copied ? "Link copied" : "Copy invite link"}
         </Button>
         <p className="mt-2 break-all font-mono text-[10px] text-muted">{inviteLink(address)}</p>

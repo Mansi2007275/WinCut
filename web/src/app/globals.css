@@ -1,123 +1,198 @@
 @import "tailwindcss";
 
+/* ---------------------------------------------------------------------------
+   WinCut design system.
+
+   One dark surface, one accent, and two signal colours that mean exactly one
+   thing each: #16C784 is profit, #EA3943 is loss. Nothing decorative is ever
+   allowed to use them, because on a trading screen a green shape that does not
+   mean "up" is a lie the eye believes before the label corrects it.
+
+   No shadows, gradients, glow or glass. Depth comes from three flat greys and
+   a 1px hairline.
+--------------------------------------------------------------------------- */
+
 @theme {
-  --color-cream: #fff8e7;
-  --color-ink: #000000;
-  --color-brand: #ffe600;
-  --color-profit: #00e676;
-  --color-loss: #ff3d57;
-  --color-info: #4d7cff;
-  --color-muted: #6b6558;
+  --color-bg: #0b0e11;
+  --color-surface: #14181d;
+  --color-elevated: #1b2027;
+  --color-border: #22272e;
+  --color-text: #e6e8eb;
+  --color-secondary: #8a929c;
 
-  /* Supplied by next/font in layout.tsx, with graceful fallbacks. */
-  --font-display: var(--font-archivo), "Archivo Black", system-ui, sans-serif;
-  --font-sans: var(--font-grotesk), "Space Grotesk", system-ui, sans-serif;
-  --font-mono: var(--font-jetbrains), ui-monospace, "Courier New", monospace;
+  /* Signals. Never used for decoration. */
+  --color-profit: #16c784;
+  --color-loss: #ea3943;
+  --color-accent: #3b82f6;
 
-  --shadow-hard: 4px 4px 0 #000;
-  --shadow-hard-sm: 2px 2px 0 #000;
-  --shadow-hard-lg: 6px 6px 0 #000;
+  /* Tinted fills for signal backgrounds, so a badge never sits on full
+     saturation behind text. */
+  --color-profit-dim: #0f2a20;
+  --color-loss-dim: #2b1418;
+  --color-accent-dim: #11213b;
+
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system, sans-serif;
+
+  --radius-card: 12px;
+  --radius-btn: 10px;
+  --radius-pill: 999px;
+
+  /* 8px grid. Tailwind's default scale is already 4px-based; these are the
+     named steps the layout actually uses. */
+  --spacing-gutter: 16px;
 }
 
 @layer base {
   html {
-    background: var(--color-cream);
+    background: var(--color-bg);
     -webkit-text-size-adjust: 100%;
   }
 
   body {
-    background: var(--color-cream);
-    color: var(--color-ink);
+    background: var(--color-bg);
+    color: var(--color-text);
     font-family: var(--font-sans);
-    /* Room for the fixed bottom tab bar. */
-    padding-bottom: 5.5rem;
+    font-feature-settings: "cv05" 1, "ss01" 1;
+    /* Room for the fixed bottom tab bar plus the iOS home indicator. */
+    padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px));
     overscroll-behavior-y: none;
   }
 
-  h1, h2, h3 {
-    font-family: var(--font-display);
+  h1,
+  h2,
+  h3 {
     letter-spacing: -0.02em;
-    line-height: 1.05;
+    line-height: 1.15;
+    font-weight: 600;
   }
 
-  /* Every money figure is monospaced so columns line up and digits don't jump. */
-  .money {
-    font-family: var(--font-mono);
+  button:disabled {
+    cursor: not-allowed;
+  }
+
+  /* Numbers must not jump width as they tick. Every figure in the app that can
+     change carries this, which is why it lives on a class rather than being
+     applied per component. */
+  .num {
     font-variant-numeric: tabular-nums;
-    font-weight: 700;
+    letter-spacing: -0.01em;
   }
 
-  button:disabled { cursor: not-allowed; }
-
-  input[type="text"], input[type="number"] {
-    font-family: var(--font-mono);
+  /* Kept as an alias: `.money` is referenced from several screens and means the
+     same thing here. */
+  .money {
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+    font-weight: 600;
   }
 
-  /* Hide number spinners: the chips and MAX button handle input. */
+  input,
+  textarea {
+    font-family: inherit;
+  }
+
+  input::placeholder {
+    color: var(--color-secondary);
+  }
+
   input::-webkit-outer-spin-button,
-  input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
-  input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
+  input::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  input[type="number"] {
+    -moz-appearance: textfield;
+    appearance: textfield;
+  }
+
+  /* Focus is visible everywhere, and uses the accent rather than the browser
+     default so it survives on the dark surface. */
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+
+  ::selection {
+    background: var(--color-accent);
+    color: #fff;
+  }
 }
 
 @layer components {
-  .nb {
-    border: 3px solid var(--color-ink);
-    box-shadow: var(--shadow-hard);
-    background: #fff;
+  /* A price that just moved. The flash is 300ms and colour-only: no transform,
+     so a row of them cannot cause layout work. */
+  .flash-up {
+    animation: flash-up 300ms ease-out;
+  }
+  .flash-down {
+    animation: flash-down 300ms ease-out;
   }
 
-  .nb-sm {
-    border: 2px solid var(--color-ink);
-    box-shadow: var(--shadow-hard-sm);
-    background: #fff;
+  @keyframes flash-up {
+    0% {
+      color: var(--color-profit);
+    }
+    100% {
+      color: inherit;
+    }
+  }
+  @keyframes flash-down {
+    0% {
+      color: var(--color-loss);
+    }
+    100% {
+      color: inherit;
+    }
   }
 
-  /* Pressed buttons collapse their shadow and shift into it. */
-  .nb-press {
-    transition: transform 60ms steps(2), box-shadow 60ms steps(2);
-  }
-  .nb-press:active:not(:disabled) {
-    transform: translate(4px, 4px);
-    box-shadow: 0 0 0 var(--color-ink);
-  }
-  .nb-press:disabled {
-    box-shadow: var(--shadow-hard-sm);
-    opacity: 0.5;
+  /* Skeletons shimmer rather than pulse, so a column of them does not strobe. */
+  .shimmer {
+    background: linear-gradient(
+      90deg,
+      var(--color-surface) 0%,
+      var(--color-elevated) 50%,
+      var(--color-surface) 100%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 1.4s ease-in-out infinite;
   }
 
-  .tilt-stamp {
-    transform: rotate(-8deg);
-    border: 3px solid var(--color-ink);
-    box-shadow: var(--shadow-hard-sm);
+  @keyframes shimmer {
+    0% {
+      background-position: 200% 0;
+    }
+    100% {
+      background-position: -200% 0;
+    }
+  }
+
+  /* Every interactive element clears 44px, including the ones that look small.
+     Applied as a class rather than a min-height on `button`, because some
+     buttons are inline chips inside a larger target. */
+  .tap {
+    min-height: 44px;
+  }
+
+  /* Hides a scrollbar on a horizontally scrolling tab strip without removing
+     the ability to scroll it. */
+  .no-scrollbar {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
   }
 }
 
-/* Count-up for the result screen. */
-@keyframes pop-in {
-  0%   { transform: scale(0.82); opacity: 0; }
-  60%  { transform: scale(1.06); opacity: 1; }
-  100% { transform: scale(1); opacity: 1; }
-}
-.animate-pop { animation: pop-in 320ms steps(6) both; }
-
-@keyframes slide-up {
-  from { transform: translateY(10px); opacity: 0; }
-  to   { transform: translateY(0); opacity: 1; }
-}
-.animate-slide { animation: slide-up 220ms ease-out both; }
-
-@keyframes bar-stripe {
-  from { background-position: 0 0; }
-  to   { background-position: 24px 0; }
-}
-.striped {
-  background-image: repeating-linear-gradient(
-    45deg, rgba(0,0,0,0.14) 0 6px, transparent 6px 12px
-  );
-  animation: bar-stripe 700ms linear infinite;
-}
-
+/* Anyone who has asked their OS to stop moving things gets a still app. The
+   chart still draws, it just arrives already drawn. */
 @media (prefers-reduced-motion: reduce) {
-  .animate-pop, .animate-slide, .striped { animation: none; }
-  .nb-press { transition: none; }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

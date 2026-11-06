@@ -5,7 +5,7 @@ import Link from "next/link";
 import { motion } from "framer-motion";
 import { useAccount, useBalance, usePublicClient, useWalletClient } from "wagmi";
 import { Page } from "@/components/Shell";
-import { AddressLink, Button, Card, Chip, Confetti, ErrorBox, Row, StatTile, TxLink } from "@/components/ui";
+import { AddressLink, Button, Card, Chip, ErrorBox, Row, StatTile, TxLink } from "@/components/ui";
 import { ConnectCta, FaucetLink } from "@/components/NetworkGate";
 import { useToast } from "@/components/Toast";
 import { reason } from "@/components/TradePanel";
@@ -111,7 +111,6 @@ export default function LaunchPage() {
   if (done) {
     return (
       <Page>
-        <Confetti run />
         <motion.div
           initial={{ opacity: 0, scale: 0.96 }}
           animate={{ opacity: 1, scale: 1 }}
@@ -142,11 +141,11 @@ export default function LaunchPage() {
         </Card>
 
         <Link href={`/coin/${done.outcome.coin}`}>
-          <Button tone="brand" className="w-full py-4 text-lg">
+          <Button tone="accent" className="w-full py-4 text-lg">
             Trade it
           </Button>
         </Link>
-        <Button tone="white" className="w-full" onClick={() => setDone(null)}>
+        <Button tone="elevated" className="w-full" onClick={() => setDone(null)}>
           Launch another
         </Button>
       </Page>
@@ -270,7 +269,7 @@ export default function LaunchPage() {
 
           {isConnected ? (
             <Button
-              tone="brand"
+              tone="accent"
               className="w-full py-4 text-lg"
               disabled={busy || problems.length > 0}
               onClick={launch}

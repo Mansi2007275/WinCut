@@ -1,7 +1,7 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { Card, Button, Row, AddressLink, TxLink, Confetti, useCountUp } from "./ui";
+import { Card, Button, Row, AddressLink, TxLink, useCountUp } from "./ui";
 import { usd, coins as fmtCoins } from "@/lib/format";
 import type { TradeResult } from "./TradePanel";
 
@@ -25,7 +25,7 @@ function BuyResult({ result, onDone }: { result: TradeResult; onDone: () => void
   const buy = result.buy;
   return (
     <>
-      <Card tone="brand" className="p-6 text-center">
+      <Card tone="accent" className="p-6 text-center">
         <p className="font-display text-sm uppercase">Bought</p>
         <p className="money mt-2 animate-pop text-4xl">{fmtCoins(buy?.coins)}</p>
         <p className="money mt-1 text-sm">for {usd(buy?.cost)}</p>
@@ -65,7 +65,7 @@ function SellResult({ result, onDone }: { result: TradeResult; onDone: () => voi
   if (!won) {
     return (
       <>
-        <Card tone="white" className="p-6 text-center">
+        <Card tone="surface" className="p-6 text-center">
           <p className="font-display text-sm uppercase text-muted">
             {pnl < 0n ? "You sold at a loss" : "You sold flat"}
           </p>
@@ -107,7 +107,6 @@ function SellResult({ result, onDone }: { result: TradeResult; onDone: () => voi
 
   return (
     <>
-      <Confetti run />
       <Card tone="profit" className="p-6 text-center">
         <p className="font-display text-sm uppercase">You profited</p>
         <p className="money mt-1 text-5xl leading-none">{usd(shown, { sign: true })}</p>
@@ -115,7 +114,7 @@ function SellResult({ result, onDone }: { result: TradeResult; onDone: () => voi
       </Card>
 
       {sell?.creditConsumed && sell.creditConsumed.used > 0n && (
-        <Card tone="info" className="p-3 text-white">
+        <Card tone="accent" className="p-3 text-white">
           <Row label="Loss credit spent" value={usd(sell.creditConsumed.used)} />
           <Row label="Credit remaining" value={usd(sell.creditConsumed.remaining)} />
           <p className="mt-1 font-mono text-[10px] leading-snug">
@@ -239,7 +238,7 @@ function Done({
       <div className="nb-sm bg-white p-3 text-center">
         <TxLink hash={hash}>{hash}</TxLink>
       </div>
-      <Button onClick={onDone} tone="ink" className="w-full">
+      <Button onClick={onDone} tone="accent" className="w-full">
         Done
       </Button>
     </>

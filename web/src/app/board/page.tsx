@@ -82,7 +82,7 @@ function RowCard({ row, rank, tab }: { row: LeaderRow; rank: number; tab: BoardT
   const primary = tab === "own" ? row.ownPnl : row.followersPnl;
 
   return (
-    <Card tone={highlight ? "loss" : "white"} className="p-4">
+    <Card tone={highlight ? "loss" : "surface"} className="p-4">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">

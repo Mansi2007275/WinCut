@@ -86,7 +86,7 @@ function Discover() {
   return (
     <Page>
       {/* The pitch, stated once, with real numbers behind it. */}
-      <Card tone="brand" className="p-4">
+      <Card tone="accent" className="p-4">
         <p className="font-display text-base uppercase leading-tight">
           Every trading app gets paid when you lose. We don&apos;t.
         </p>
@@ -108,7 +108,7 @@ function Discover() {
           <StatTile
             label="Dumpers"
             value={trades.isPending ? "…" : dumpers}
-            tone={dumpers ? "loss" : "white"}
+            tone={dumpers ? "loss" : "text"}
           />
         </div>
       </Card>
@@ -120,7 +120,7 @@ function Discover() {
             hint="Nothing here is seeded. This list only ever shows coins launched by real wallets on Arc testnet."
           />
           <Link href="/launch">
-            <Button tone="brand" className="w-full py-4 text-lg">
+            <Button tone="accent" className="w-full py-4 text-lg">
               Launch the first coin
             </Button>
           </Link>
@@ -279,7 +279,7 @@ function CoinCard({ coin, index, head }: { coin: Coin; index: number; head?: big
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <Badge>creator</Badge>
           <AddressLink address={coin.creator} tight className="text-[10px]" />
-          {follow && <Badge tone="info">copying {follow.slice(0, 6)}…</Badge>}
+          {follow && <Badge tone="accent">copying {follow.slice(0, 6)}…</Badge>}
         </div>
       </Card>
     </motion.div>
