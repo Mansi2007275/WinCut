@@ -43,11 +43,23 @@ export default function LaunchPage() {
   const cleanSymbol = symbol.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 10);
   const enough = (bal?.value ?? 0n) > initialQuote;
 
-  const problems: string[] = [];
-  if (name.trim().length < 2) problems.push("Name needs at least 2 characters.");
-  if (cleanSymbol.length < 2) problems.push("Ticker needs at least 2 characters.");
-  if (initialQuote <= 0n) problems.push("Starting liquidity must be more than $0.");
-  if (isConnected && !enough) problems.push("Not enough test USDC for that much liquidity plus gas.");
+  /**
+   * Requirements as a checklist rather than a list of errors.
+   *
+   * Phrased as errors, an untouched form reads as broken: it opens with two red
+   * complaints about fields nobody has typed in yet. A checklist says the same
+   * thing as progress.
+   */
+  const checks = [
+    { ok: name.trim().length >= 2, label: "Name, at least 2 characters" },
+    { ok: cleanSymbol.length >= 2, label: "Ticker, at least 2 characters" },
+    { ok: initialQuote > 0n, label: "Starting liquidity above $0" },
+    {
+      ok: !isConnected || enough,
+      label: "Enough test USDC for the liquidity plus gas",
+    },
+  ];
+  const problems = checks.filter((c) => !c.ok);
 
   async function launch() {
     if (!wallet || !client || !address) return;
@@ -158,7 +170,10 @@ export default function LaunchPage() {
             <input
               value={name}
               onChange={(e) => setName(e.target.value.slice(0, 32))}
-              placeholder="Mumbai Monsoon"
+              // Prefixed with "e.g." on purpose. A bare example here reads as a
+              // filled-in field, so the form looks complete while the state is
+              // still empty and the button stays disabled.
+              placeholder="e.g. Mumbai Monsoon"
               aria-label="Coin name"
               className="nb-sm w-full bg-white px-3 py-2 text-base outline-none"
             />
@@ -171,7 +186,7 @@ export default function LaunchPage() {
               <input
                 value={symbol}
                 onChange={(e) => setSymbol(e.target.value.slice(0, 10))}
-                placeholder="MNSN"
+                placeholder="e.g. MNSN"
                 aria-label="Ticker"
                 className="nb-sm money w-full bg-white px-3 py-2 text-base uppercase outline-none"
               />
@@ -234,11 +249,18 @@ export default function LaunchPage() {
             <StatTile label="Your LP" value="Locked" sub="forever" />
           </div>
 
-          {problems.length > 0 && isConnected && (
+          {problems.length > 0 && (
             <Card className="p-3">
-              {problems.map((p) => (
-                <p key={p} className="font-mono text-[11px] leading-snug text-muted">
-                  · {p}
+              <p className="mb-1 font-display text-[10px] uppercase text-muted">
+                Before you can launch
+              </p>
+              {checks.map((c) => (
+                <p
+                  key={c.label}
+                  className={`text-[11px] leading-relaxed ${c.ok ? "text-muted line-through" : ""}`}
+                >
+                  <span className="money mr-1">{c.ok ? "✓" : "○"}</span>
+                  {c.label}
                 </p>
               ))}
             </Card>
