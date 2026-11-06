@@ -3,7 +3,7 @@
 import { motion } from "framer-motion";
 import { useState } from "react";
 import { AddressLink, Avatar, Button, Card, Row, SplitBar, TxLink } from "./ui";
-import { usd, coins as fmtCoins, short } from "@/lib/format";
+import { usd, coins as fmtCoins } from "@/lib/format";
 import { deployed, explorerTx } from "@/lib/chain";
 import type { TradeResult } from "./TradePanel";
 
