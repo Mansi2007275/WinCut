@@ -351,7 +351,42 @@ const swapEvent = parseAbiItem(
   "event Swap(bytes32 indexed id, address indexed sender, int128 amount0, int128 amount1, uint160 sqrtPriceX96, uint128 liquidity, int24 tick, uint24 fee)",
 );
 
-export type PricePoint = { block: bigint; price: number; volumeQuote: bigint };
+export type PricePoint = {
+  block: bigint;
+  price: number;
+  volumeQuote: bigint;
+  /// Unix seconds, read from the block itself. The chart needs a real time
+  /// axis and a block number is not one; interpolating between two known
+  /// blocks would be inventing data, so each block is actually fetched.
+  time?: number;
+};
+
+/**
+ * Block number to unix seconds.
+ *
+ * A block's timestamp never changes, so this is cached for the life of the
+ * page. Without it every 30s refetch would re-request the same timestamps and
+ * walk straight into Arc's rate limiter.
+ */
+const blockTimeCache = new Map<string, number>();
+
+async function blockTimes(client: PublicClient, blocks: bigint[]): Promise<Map<string, number>> {
+  const missing = [...new Set(blocks.map(String))].filter((b) => !blockTimeCache.has(b));
+  // The transport batches these, so a few hundred points is a handful of
+  // HTTP requests rather than a few hundred.
+  await Promise.all(
+    missing.map(async (b) => {
+      try {
+        const blk = await client.getBlock({ blockNumber: BigInt(b) });
+        blockTimeCache.set(b, Number(blk.timestamp));
+      } catch {
+        // A missing timestamp just means that point falls back to its block
+        // number ordering; it must not take the whole chart down.
+      }
+    }),
+  );
+  return blockTimeCache;
+}
 
 /**
  * Real price history for one pool.
@@ -374,7 +409,7 @@ export function usePriceSeries(poolId?: `0x${string}`, quoteIsCurrency0 = true) 
         event: swapEvent,
         eventArgs: { id: poolId! },
       });
-      return logs
+      const points = logs
         .map((l) => {
           const a = (l as unknown as {
             args: { sqrtPriceX96: bigint; amount0: bigint; amount1: bigint };
@@ -389,6 +424,12 @@ export function usePriceSeries(poolId?: `0x${string}`, quoteIsCurrency0 = true) 
         })
         .filter((p) => p.price > 0)
         .sort((x, y) => Number(x.block - y.block));
+
+      const times = await blockTimes(
+        client as PublicClient,
+        points.map((p) => p.block),
+      );
+      return points.map((p) => ({ ...p, time: times.get(String(p.block)) }));
     },
   });
 }
