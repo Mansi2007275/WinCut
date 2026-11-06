@@ -60,7 +60,14 @@ contract WinCutForkTest is Test {
 
         vm.createSelectFork(rpc);
         forked = true;
-        assertEq(block.chainid, 5042, "not on Arc mainnet");
+        // Arc mainnet (5042) and Arc testnet (5042002) carry the SAME v4
+        // deployment at the SAME addresses -- both PoolManager and Universal
+        // Router were bytecode-checked on each chain. WinCut itself is deployed
+        // on testnet, so these tests must be runnable against either RPC.
+        assertTrue(
+            block.chainid == 5042 || block.chainid == 5042002,
+            "ARC_RPC is not an Arc chain (expected 5042 or 5042002)"
+        );
 
         pm = IPoolManager(POOL_MANAGER);
 

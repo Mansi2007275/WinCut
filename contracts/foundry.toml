@@ -21,3 +21,34 @@ remappings = [
 
 [profile.default.fuzz]
 runs = 256
+
+# ---------------------------------------------------------------------------
+# Lint baseline.
+#
+# These two lint classes are REVIEWED AND ACCEPTED, not unexamined. They are
+# silenced here in config rather than with in-source `forge-lint: disable`
+# comments on purpose: the three deployed contracts (hook, launcher, quoter on
+# Arc testnet) are byte-for-byte identical to this source once immutables are
+# masked, and editing a source byte -- even a comment -- changes the appended
+# solc metadata hash and breaks that verifiable correspondence.
+#
+# unsafe-typecast (30 sites, all in WinCutHook / WinCutQuoter / tests):
+#   Every cast is bounded by a prior check or by v4's own types. The two that
+#   touch money are `int128(uint128(fee))` in _handleSell -- `fee` is at most
+#   10% of `proceeds`, itself derived from an int128 swap delta, so it cannot
+#   reach 2^127 -- and `uint128(uint256(pos.cost) - basis)` in _consume, where
+#   `basis` is a proportional slice of `pos.cost` and so is always <= it,
+#   making the subtraction non-negative and the result <= a uint128 it came
+#   from. Both are covered by testFuzz_FeeNeverExceedsTenPercentOfGain and
+#   testFuzz_NeverChargesOnALoss.
+#
+# erc20-unchecked-transfer (7 sites, 3 in WinCutLauncher, 4 in tests/scripts):
+#   QUOTE is an immutable fixed to address(0) (native USDC) on every live
+#   deployment, so the ERC-20 branches in _collectQuote, _refundQuoteDust and
+#   _settle(currency0) are unreachable. The one ERC-20 transfer that does run,
+#   _settle(currency1), moves WinCutCoin -- this repo's own fixed-supply token
+#   with no transfer hook, no fee-on-transfer and a hard `return true`.
+#
+# Everything else -- including any NEW lint class -- still fails the build.
+[lint]
+exclude_lints = ["unsafe-typecast", "erc20-unchecked-transfer"]
