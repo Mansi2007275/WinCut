@@ -6,6 +6,8 @@
   "contracts": {
     "winCutHook": "0xd4A4ABADf6A309aC156992085A72a04AB251a044",
     "winCutLauncher": "0x82Bd83ec6D4bCC8EaB6F6cF7565efE1e41D92Ce5",
+    "winCutQuoter": "0x26Df0Ea798971A97Ae121514B32999DfDb220e1f",
+    "v4Quoter": "0x26Df0Ea798971A97Ae121514B32999DfDb220e1f",
     "poolManager": "0x8366a39CC670B4001A1121B8F6A443A643e40951",
     "universalRouter": "0x4fcA4a51Ab4F23A7447b3284fBd7D73289A89Fb1",
     "permit2": "0x000000000022D473030F116dDEE9F6B43aC78BA3"
@@ -17,5 +19,5 @@
     "isNative": true
   },
   "pool": { "fee": 3000, "tickSpacing": 60 },
-  "generatedAt": "2026-11-06T11:47:19Z"
+  "generatedAt": "2026-11-06T12:01:20Z"
 }

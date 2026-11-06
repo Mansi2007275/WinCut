@@ -36,8 +36,19 @@ contract SeedTrades is Script {
     Currency QUOTE;
     bool quoteIsNative;
 
+    /// @dev Anvil's default mnemonic. These accounts are pre-funded AND signable,
+    ///      so we broadcast with their real keys. vm.deal does NOT work here: it
+    ///      is a simulation cheatcode and never touches the live anvil chain.
+    string constant ANVIL_MNEMONIC = "test test test test test test test test test test test junk";
+
+    uint256[] pks;
     address[] traders;
     address[] coins;
+
+    uint256 honestPk;
+    uint256 dumperPk;
+    uint256 referrerPk;
+    uint256 moverPk;
 
     address honest;
     address dumper;
@@ -52,9 +63,15 @@ contract SeedTrades is Script {
 
         require(quoteIsNative, "this seed script assumes native USDC on Arc");
 
-        for (uint256 i = 0; i < 14; i++) {
-            traders.push(vm.addr(uint256(keccak256(abi.encode("wincut.seed.v2", i)))));
+        for (uint32 i = 0; i < 14; i++) {
+            uint256 pk = vm.deriveKey(ANVIL_MNEMONIC, i);
+            pks.push(pk);
+            traders.push(vm.addr(pk));
         }
+        honestPk = pks[0];
+        dumperPk = pks[1];
+        referrerPk = pks[2];
+        moverPk = pks[3];
         honest = traders[0];
         dumper = traders[1];
         referrer = traders[2];
@@ -66,10 +83,8 @@ contract SeedTrades is Script {
         console.log("referrer      :", referrer);
         console.log("");
 
-        // Fund everyone with native USDC. On a fork this is free.
-        for (uint256 i = 0; i < traders.length; i++) {
-            vm.deal(traders[i], 1_200_000e18);
-        }
+        // Funding comes from `anvil --accounts 20 --balance ...`, not vm.deal.
+        require(traders[0].balance > 400_000e18, "fund anvil accounts: --balance too low");
 
         _launch("Duke", "DUKE");
         _launch("Tolly", "TOLLY");
@@ -91,7 +106,7 @@ contract SeedTrades is Script {
 
     function _launch(string memory name, string memory symbol) internal {
         uint256 seed = 120_000e18;
-        vm.broadcast(honest);
+        vm.broadcast(honestPk);
         (address coin,) = launcher.launchCoin{value: seed}(name, symbol, "ipfs://wincut", seed, 500_000_000e18);
         coins.push(coin);
         console.log("launched", symbol, coin);
@@ -103,17 +118,17 @@ contract SeedTrades is Script {
     function _honestRound(address coin, uint256 from, uint256 to) internal {
         PoolKey memory key = launcher.poolKeyFor(coin);
 
-        _buy(key, honest, 4_000e18, abi.encode(address(0), referrer));
+        _buy(key, honestPk, 4_000e18, abi.encode(address(0), referrer));
         for (uint256 i = from; i < to; i++) {
-            _buy(key, traders[i], uint128(900e18 + i * 150e18), abi.encode(honest, referrer));
+            _buy(key, pks[i], uint128(900e18 + i * 150e18), abi.encode(honest, referrer));
         }
 
-        _buy(key, mover, 90_000e18, ""); // lift
+        _buy(key, moverPk, 90_000e18, ""); // lift
 
         for (uint256 i = from; i < to; i++) {
-            _sellAll(key, coin, traders[i], abi.encode(honest, referrer));
+            _sellAll(key, coin, pks[i], abi.encode(honest, referrer));
         }
-        _sellAll(key, coin, honest, abi.encode(address(0), referrer));
+        _sellAll(key, coin, honestPk, abi.encode(address(0), referrer));
     }
 
     /// @dev The dumper's own PnL is positive, his followers' is negative, and
@@ -121,15 +136,15 @@ contract SeedTrades is Script {
     function _dumpOnFollowers(address coin, uint256 from, uint256 to) internal {
         PoolKey memory key = launcher.poolKeyFor(coin);
 
-        _buy(key, dumper, 20_000e18, abi.encode(address(0), referrer));
+        _buy(key, dumperPk, 20_000e18, abi.encode(address(0), referrer));
         for (uint256 i = from; i < to; i++) {
-            _buy(key, traders[i], 2_500e18, abi.encode(dumper, referrer));
+            _buy(key, pks[i], 2_500e18, abi.encode(dumper, referrer));
         }
 
-        _sellAll(key, coin, dumper, abi.encode(address(0), referrer)); // the dump
+        _sellAll(key, coin, dumperPk, abi.encode(address(0), referrer)); // the dump
 
         for (uint256 i = from; i < to; i++) {
-            _sellAll(key, coin, traders[i], abi.encode(dumper, referrer)); // followers eat it
+            _sellAll(key, coin, pks[i], abi.encode(dumper, referrer)); // followers eat it
         }
     }
 
@@ -138,43 +153,44 @@ contract SeedTrades is Script {
         PoolKey memory key = launcher.poolKeyFor(coin);
 
         for (uint256 i = from; i < to; i++) {
-            _buy(key, traders[i], 1_500e18, abi.encode(honest, referrer));
+            _buy(key, pks[i], 1_500e18, abi.encode(honest, referrer));
         }
 
         // Price falls: the first half exit red and bank credit.
-        _buy(key, mover, 40_000e18, "");
-        _sellAll(key, coin, mover, "");
+        _buy(key, moverPk, 40_000e18, "");
+        _sellAll(key, coin, moverPk, "");
         for (uint256 i = from; i < from + 2; i++) {
-            _sellAll(key, coin, traders[i], abi.encode(honest, referrer));
+            _sellAll(key, coin, pks[i], abi.encode(honest, referrer));
         }
 
         // Then it recovers and the rest exit green.
-        _buy(key, mover, 110_000e18, "");
+        _buy(key, moverPk, 110_000e18, "");
         for (uint256 i = from + 2; i < to; i++) {
-            _sellAll(key, coin, traders[i], abi.encode(honest, referrer));
+            _sellAll(key, coin, pks[i], abi.encode(honest, referrer));
         }
-        _sellAll(key, coin, mover, "");
+        _sellAll(key, coin, moverPk, "");
     }
 
     // ----------------------------------------------------------------- swaps
 
-    function _buy(PoolKey memory key, address who, uint128 amountIn, bytes memory hookData) internal {
+    function _buy(PoolKey memory key, uint256 pk, uint128 amountIn, bytes memory hookData) internal {
         // Native USDC sorts to currency0, so buying is zeroForOne.
         (bytes memory cmds, bytes[] memory inputs, uint256 value) =
             UniversalRouterLib.encodeExactInSingle(key, true, amountIn, 0, hookData);
 
-        vm.broadcast(who);
+        vm.broadcast(pk);
         IUniversalRouter(UNIVERSAL_ROUTER).execute{value: value}(cmds, inputs, block.timestamp + 600);
     }
 
-    function _sellAll(PoolKey memory key, address coin, address who, bytes memory hookData) internal {
+    function _sellAll(PoolKey memory key, address coin, uint256 pk, bytes memory hookData) internal {
+        address who = vm.addr(pk);
         uint256 bal = IERC20(coin).balanceOf(who);
         if (bal == 0) return;
 
         // Selling an ERC-20 through Universal Router goes via Permit2.
-        vm.broadcast(who);
+        vm.broadcast(pk);
         IERC20(coin).approve(PERMIT2, type(uint256).max);
-        vm.broadcast(who);
+        vm.broadcast(pk);
         IPermit2Approve(PERMIT2).approve(
             coin, UNIVERSAL_ROUTER, type(uint160).max, uint48(block.timestamp + 7 days)
         );
@@ -182,7 +198,7 @@ contract SeedTrades is Script {
         (bytes memory cmds, bytes[] memory inputs,) =
             UniversalRouterLib.encodeExactInSingle(key, false, uint128(bal), 0, hookData);
 
-        vm.broadcast(who);
+        vm.broadcast(pk);
         IUniversalRouter(UNIVERSAL_ROUTER).execute(cmds, inputs, block.timestamp + 600);
     }
 

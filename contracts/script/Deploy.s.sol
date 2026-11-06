@@ -9,6 +9,7 @@ import {HookMiner} from "@uniswap/v4-periphery/test/shared/HookMiner.sol";
 
 import {WinCutHook} from "../src/WinCutHook.sol";
 import {WinCutLauncher} from "../src/WinCutLauncher.sol";
+import {WinCutQuoter} from "../src/periphery/WinCutQuoter.sol";
 
 /// @notice Deploys WinCutHook at a mined address, then the launcher, and wires them.
 ///
@@ -47,11 +48,14 @@ contract Deploy is Script {
             owner: msg.sender
         });
 
-        (address hook, address launcher) = _deploy(cfg);
-        _report(cfg, hook, launcher);
+        (address hook, address launcher, address quoter, address winCutQuoter) = _deploy(cfg);
+        _report(cfg, hook, launcher, quoter, winCutQuoter);
     }
 
-    function _deploy(Config memory cfg) internal returns (address hookAddr, address launcherAddr) {
+    function _deploy(Config memory cfg)
+        internal
+        returns (address hookAddr, address launcherAddr, address quoterAddr, address winCutQuoterAddr)
+    {
         // FROZEN permission bitmap: 0x2044.
         uint160 flags =
             uint160(Hooks.BEFORE_INITIALIZE_FLAG | Hooks.AFTER_SWAP_FLAG | Hooks.AFTER_SWAP_RETURNS_DELTA_FLAG);
@@ -87,10 +91,19 @@ contract Deploy is Script {
         hook.setLauncher(launcherAddr);
         hook.setTrustedRouter(cfg.universalRouter, true);
 
+        // Our own quoter. It simulates a swap and reverts with the delta, so
+        // unlike v4-periphery's V4Quoter it reads no PoolManager storage and is
+        // immune to layout drift between v4-core versions.
+        winCutQuoterAddr = address(new WinCutQuoter(IPoolManager(cfg.poolManager), hook));
+        quoterAddr = winCutQuoterAddr;
+
         vm.stopBroadcast();
     }
 
-    function _report(Config memory cfg, address hook, address launcher) internal pure {
+    function _report(Config memory cfg, address hook, address launcher, address quoter, address winCutQuoter)
+        internal
+        pure
+    {
         console.log("");
         console.log("=== WinCut deployed ===");
         console.log("WinCutHook     :", hook);
@@ -98,6 +111,8 @@ contract Deploy is Script {
         console.log("QUOTE          :", cfg.quote);
         console.log("trusted router :", cfg.universalRouter);
         console.log("treasury       :", cfg.treasury);
+        console.log("V4Quoter       :", quoter);
+        console.log("WinCutQuoter   :", winCutQuoter);
         console.log("owner          :", cfg.owner);
     }
 }
