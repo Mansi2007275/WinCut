@@ -97,8 +97,8 @@ type Coin = {
   quoteIs0: boolean;
 };
 
-let actors: Actor[] = [];
-let coins: Coin[] = [];
+const actors: Actor[] = [];
+const coins: Coin[] = [];
 let stopping = false;
 let actions = 0;
 let errors = 0;
