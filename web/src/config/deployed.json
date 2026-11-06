@@ -18,6 +18,10 @@
     "decimals": 18,
     "isNative": true
   },
-  "pool": { "fee": 3000, "tickSpacing": 60 },
-  "generatedAt": "2026-11-06T12:28:23Z"
+  "pool": {
+    "fee": 3000,
+    "tickSpacing": 60
+  },
+  "generatedAt": "2026-11-06T12:28:23Z",
+  "deployedAtBlock": 29837658
 }

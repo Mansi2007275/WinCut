@@ -5,6 +5,7 @@ import { usePublicClient } from "wagmi";
 import { parseAbiItem, type Address, type PublicClient } from "viem";
 import { winCutHookAbi, winCutLauncherAbi, erc20Abi } from "@/config/abis";
 import { addr, type PoolKey } from "./chain";
+import { getLogsChunked } from "./logs";
 
 export type Coin = {
   address: Address;
@@ -154,6 +155,13 @@ export type Trade = {
 
 const ZERO = "0x0000000000000000000000000000000000000000";
 
+type BoughtArgs = {
+  trader: Address; id: `0x${string}`; coins: bigint; cost: bigint; followed: Address; referrer: Address;
+};
+type SoldArgs = {
+  trader: Address; id: `0x${string}`; coins: bigint; proceeds: bigint; pnl: bigint; fee: bigint;
+};
+
 // Parsed from signatures so viem can infer the arg types properly.
 const boughtEvent = parseAbiItem(
   "event Bought(address indexed trader, bytes32 indexed id, uint128 coins, uint256 cost, address followed, address referrer)",
@@ -163,19 +171,16 @@ const soldEvent = parseAbiItem(
 );
 
 async function fetchTrades(client: PublicClient): Promise<Trade[]> {
+  // Chunked, and never scanning before the hook was deployed. Arc's RPC
+  // rejects wide ranges outright, so a single big getLogs fails.
   const latest = await client.getBlockNumber();
-  // Anvil forks keep only recent history locally; a bounded window is also
-  // what keeps this fast enough to run without a separate indexer.
-  const span = 200_000n;
-  const fromBlock = latest > span ? latest - span : 0n;
-
   const [bought, sold] = await Promise.all([
-    client.getLogs({ address: addr.hook, event: boughtEvent, fromBlock, toBlock: latest }),
-    client.getLogs({ address: addr.hook, event: soldEvent, fromBlock, toBlock: latest }),
+    getLogsChunked(client, { address: addr.hook, event: boughtEvent, latest }),
+    getLogsChunked(client, { address: addr.hook, event: soldEvent, latest }),
   ]);
 
   const buys: Trade[] = bought.map((l) => {
-    const a = l.args;
+    const a = (l as unknown as { args: BoughtArgs }).args;
     return {
       kind: "buy",
       trader: a.trader!,
@@ -190,7 +195,7 @@ async function fetchTrades(client: PublicClient): Promise<Trade[]> {
   });
 
   const sells: Trade[] = sold.map((l) => {
-    const a = l.args;
+    const a = (l as unknown as { args: SoldArgs }).args;
     return {
       kind: "sell",
       trader: a.trader!,

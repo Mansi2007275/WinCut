@@ -129,7 +129,8 @@ HOOK="$HOOK" LAUNCHER="$LAUNCHER" forge script script/SeedTrades.s.sol \
   --rpc-url "$LOCAL_RPC" --broadcast --skip-simulation 2>&1 \
   | grep -E "launched|claimable|honest|dumper|referrer|treasury|credit|coins launched|POSITIVE" || true
 
-echo "[dev] 5/5  writing web/src/config/deployed.json"
+DEPLOY_BLOCK=$(cast block-number --rpc-url "$LOCAL_RPC" | tr -dc "0-9")
+echo "[dev] 5/5  writing web/src/config/deployed.json (deployedAtBlock=$DEPLOY_BLOCK)"
 cd "$ROOT"
 mkdir -p web/src/config
 cat > web/src/config/deployed.json <<JSON
@@ -154,6 +155,7 @@ cat > web/src/config/deployed.json <<JSON
     "isNative": true
   },
   "pool": { "fee": 3000, "tickSpacing": 60 },
+  "deployedAtBlock": $DEPLOY_BLOCK,
   "generatedAt": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 }
 JSON

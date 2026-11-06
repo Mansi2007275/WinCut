@@ -112,10 +112,10 @@ async function main() {
   console.log("");
   console.log("[2] quoteBuy through WinCutQuoter");
   const buyIn = 2_000n * 10n ** 18n;
-  const coinsOut = await pub.readContract({
+  const coinsOut = (await pub.readContract({
     address: quoter, abi: winCutQuoterAbi, functionName: "quoteBuy",
     args: [poolKey, quoteIs0, buyIn],
-  });
+  })) as unknown as bigint;
   check(coinsOut > 0n, "quoteBuy returns coins", `${formatUnits(coinsOut, 18)} ${symbol}`);
 
   // 3 ---------------------------------------------------------------
@@ -164,10 +164,10 @@ async function main() {
   });
   await pub.waitForTransactionReceipt({ hash: ph });
 
-  const [grossOut, fee, netOut, lossCredit, volumeFee] = await pub.readContract({
+  const [grossOut, fee, netOut, lossCredit, volumeFee] = (await pub.readContract({
     address: quoter, abi: winCutQuoterAbi, functionName: "quoteSell",
     args: [trader.address, poolKey, !quoteIs0, amount],
-  });
+  })) as unknown as readonly [bigint, bigint, bigint, bigint, bigint];
   console.log(`      gross ${usd(grossOut)}  fee ${usd(fee)}  net ${usd(netOut)}`);
   console.log(`      a 0.5%-of-volume app would charge ${usd(volumeFee)}`);
   check(fee > 0n, "a real fee is quoted on a profitable sell");

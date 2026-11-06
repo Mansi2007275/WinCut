@@ -8,7 +8,8 @@ import { Page } from "@/components/Shell";
 import { Card, Button, Chip, Tabs, Row, Loading, Empty, ErrorBox, Badge, TxState } from "@/components/ui";
 import { useCoins, usePosition, useCoinBalance, useAccountState } from "@/lib/data";
 import { addr, QUOTE, buyDirection, sellDirection, deployed, explorerTx } from "@/lib/chain";
-import { winCutQuoterAbi, erc20Abi, permit2Abi, universalRouterAbi } from "@/config/abis";
+import { erc20Abi, permit2Abi, universalRouterAbi } from "@/config/abis";
+import { quoteBuy, quoteSell } from "@/lib/quote";
 import { buildSwap, encodeAttribution, deadline, MAX_UINT160 } from "@/lib/swap";
 import { usd, coins as fmtCoins, parseUsd, applySlippage, handle, short } from "@/lib/format";
 import { Result } from "@/components/Result";
@@ -94,22 +95,22 @@ function Trade() {
       setQuoting(true);
       try {
         if (side === "buy") {
-          const out = await client.readContract({
-            address: addr.quoter,
-            abi: winCutQuoterAbi,
-            functionName: "quoteBuy",
-            args: [coin.poolKey, buyDirection(coin.poolKey), input],
-          });
-          if (!cancelled) setQuote({ grossOut: 0n, fee: 0n, netOut: 0n, lossCredit: acct.data?.lossCredit ?? 0n, volumeFee: (input * 50n) / 10_000n, coinsOut: out });
-        } else {
-          const r = await client.readContract({
-            address: addr.quoter,
-            abi: winCutQuoterAbi,
-            functionName: "quoteSell",
-            args: [address ?? addr.hook, coin.poolKey, sellDirection(coin.poolKey), input],
+          const out = await quoteBuy(client, {
+            key: coin.poolKey, zeroForOne: buyDirection(coin.poolKey), amountIn: input,
           });
           if (!cancelled)
-            setQuote({ grossOut: r[0], fee: r[1], netOut: r[2], lossCredit: r[3], volumeFee: r[4] });
+            setQuote({
+              grossOut: 0n, fee: 0n, netOut: 0n,
+              lossCredit: acct.data?.lossCredit ?? 0n,
+              volumeFee: (input * 50n) / 10_000n,
+              coinsOut: out,
+            });
+        } else {
+          const q = await quoteSell(client, {
+            trader: address ?? addr.hook, key: coin.poolKey,
+            zeroForOne: sellDirection(coin.poolKey), coinIn: input,
+          });
+          if (!cancelled) setQuote({ ...q, volumeFee: q.volumeFee });
         }
         if (!cancelled) setError(undefined);
       } catch (e) {
