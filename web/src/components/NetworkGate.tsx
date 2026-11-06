@@ -152,6 +152,27 @@ export function FaucetLink({ className = "" }: { className?: string }) {
   );
 }
 
+export const WALLET_PENDING_MESSAGE = "Open MetaMask to approve the connection";
+
+/**
+ * True when the wallet is telling us a request is already open (EIP-1193
+ * -32002), rather than that something went wrong.
+ *
+ * The code can sit on the error itself or on any link of its `cause` chain,
+ * depending on whether wagmi, viem or the provider wrapped it, so the chain is
+ * walked. The message check is the backstop for providers that only set text.
+ */
+export function isAlreadyPendingError(error: unknown): boolean {
+  let node: unknown = error;
+  for (let depth = 0; depth < 6 && node; depth++) {
+    const e = node as { code?: unknown; cause?: unknown };
+    if (e.code === -32002) return true;
+    node = e.cause;
+  }
+  const message = (error as { message?: string } | null)?.message ?? "";
+  return /already pending|already processing/i.test(message);
+}
+
 /// Connect button that actually shows why it failed.
 ///
 /// `compact` is for the top bar, which is a 7.5rem slot. Rendering the full
@@ -165,7 +186,7 @@ export function ConnectCta({
   label?: string;
   compact?: boolean;
 }) {
-  const { connect, connectors, isPending, error } = useConnect();
+  const { connect, connectors, isPending, error, reset } = useConnect();
   const has = useHasInjected();
 
   if (has === false) {
@@ -184,17 +205,70 @@ export function ConnectCta({
     return <NoWalletBanner />;
   }
 
+  // -32002 means MetaMask already has an unanswered connect prompt open,
+  // usually behind the browser window. It is not a failure and the raw text
+  // ("Request of type 'wallet_requestPermissions' already pending for origin
+  // ...") reads like one, so it gets the same wording as a normal wait.
+  const alreadyPending = isAlreadyPendingError(error);
+  const waiting = isPending || alreadyPending;
+
+  function retry() {
+    // The old error has to be cleared first, or wagmi keeps reporting the
+    // stale -32002 and the button never comes back.
+    reset();
+    connect({ connector: connectors[0] });
+  }
+
+  if (compact) {
+    return (
+      <div className="flex flex-col gap-1">
+        <Button
+          tone="ink"
+          className="w-full px-2 py-2 text-xs"
+          disabled={waiting || connectors.length === 0}
+          onClick={() => connect({ connector: connectors[0] })}
+        >
+          {waiting ? "Waiting…" : label}
+        </Button>
+        {waiting && (
+          <p className="font-mono text-[9px] leading-tight text-ink/70">{WALLET_PENDING_MESSAGE}</p>
+        )}
+        {alreadyPending && (
+          <button
+            onClick={retry}
+            className="nb-sm nb-press bg-white px-2 py-1 font-display text-[10px] uppercase"
+          >
+            Retry
+          </button>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col gap-2">
       <Button
         tone="ink"
         className="w-full py-4 text-lg"
-        disabled={isPending || connectors.length === 0}
+        disabled={waiting || connectors.length === 0}
         onClick={() => connect({ connector: connectors[0] })}
       >
-        {isPending ? "Check your wallet…" : label}
+        {waiting ? "Waiting for MetaMask…" : label}
       </Button>
-      {error && (
+
+      {waiting && (
+        <p className="nb-sm bg-brand p-2 font-mono text-[11px] leading-snug">
+          {WALLET_PENDING_MESSAGE}
+        </p>
+      )}
+
+      {alreadyPending && (
+        <Button tone="white" className="w-full" onClick={retry}>
+          Retry
+        </Button>
+      )}
+
+      {error && !alreadyPending && (
         <p className="nb-sm bg-loss p-2 font-mono text-[10px] leading-snug text-white">
           {error.message}
         </p>

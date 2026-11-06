@@ -23,7 +23,7 @@ import { addr, isDeployed } from "@/lib/chain";
 import { winCutHookAbi } from "@/config/abis";
 import { inviteLink } from "@/lib/referral";
 import { reason } from "@/components/TradePanel";
-import { usd, coins as fmtCoins } from "@/lib/format";
+import { usd, coins as fmtCoins, price as fmtPrice } from "@/lib/format";
 
 export default function MePage() {
   const { address, isConnected } = useAccount();
@@ -257,7 +257,7 @@ function PositionCard({
         <div className="mt-3 border-t-3 border-ink pt-2">
           <Row label="Amount" value={fmtCoins(amount)} />
           <Row label="Total cost" value={usd(cost)} />
-          <Row label="Avg cost / coin" value={`$${(Number(avg) / 1e18).toExponential(3)}`} />
+          <Row label="Avg cost / coin" value={fmtPrice(Number(avg) / 1e18)} />
           <Badge>tracked by the hook</Badge>
           <p className="mt-2 font-mono text-[10px] leading-snug text-muted">
             Only coins bought through WinCut are tracked. Airdropped or transferred

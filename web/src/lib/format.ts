@@ -21,7 +21,8 @@ export function coins(v: bigint | undefined, decimals = 18): string {
   if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(2)}B`;
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(2)}K`;
-  if (n < 0.0001) return n.toExponential(2);
+  // No scientific notation anywhere in the UI, dust amounts included.
+  if (n < 0.0001) return n.toLocaleString("en-US", { maximumFractionDigits: 10 });
   return n.toLocaleString("en-US", { maximumFractionDigits: 4 });
 }
 
@@ -67,12 +68,51 @@ export function priceFromSqrtX96(sqrtPriceX96: bigint, quoteIsCurrency0: boolean
   return quoteIsCurrency0 ? 1 / onePerZero : onePerZero;
 }
 
-/// Coin prices are tiny, so they need more digits than money does.
+const SUBSCRIPT_DIGITS = "₀₁₂₃₄₅₆₇₈₉";
+
+/// 8 -> "₈", 11 -> "₁₁".
+function subscript(n: number): string {
+  return String(n)
+    .split("")
+    .map((d) => SUBSCRIPT_DIGITS[Number(d)])
+    .join("");
+}
+
+/**
+ * Coin prices, which on a freshly launched memecoin are very small numbers.
+ *
+ * `toExponential` was honest but unreadable: "$7.57e-9" is the kind of thing a
+ * person has to stop and decode, and two of them side by side cannot be
+ * compared at a glance. The convention every exchange settled on is the
+ * subscript-zero form -- $0.0₈757 means "0." then eight zeros then 757 -- which
+ * keeps every digit and still reads as a price.
+ *
+ * Normal prices get 2-4 decimals and no cleverness.
+ */
 export function price(v: number): string {
   if (!Number.isFinite(v) || v === 0) return "—";
-  if (v >= 1) return `$${v.toLocaleString("en-US", { maximumFractionDigits: 4 })}`;
-  if (v >= 0.0001) return `$${v.toFixed(6)}`;
-  return `$${v.toExponential(2)}`;
+  const neg = v < 0;
+  const a = Math.abs(v);
+  const sign = neg ? "-" : "";
+
+  // The cut-off is a cent, not 0.0001, because 4 decimals cannot carry a price
+  // below that without losing digits: 0.00012345 would render "$0.0001" and
+  // throw away everything that distinguishes it from 0.00010001.
+  if (a >= 0.01) {
+    return `${sign}$${a.toLocaleString("en-US", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 4,
+    })}`;
+  }
+
+  // Below a cent the leading zeros are the whole story, so count them rather
+  // than print them. Deriving the exponent from toExponential's own output
+  // keeps the rounding consistent: 9.999e-9 becomes 1.00e-8, and the exponent
+  // we read back is the rounded one, not the original.
+  const [mantissa, exponent] = a.toExponential(2).split("e");
+  const zeros = -Number(exponent) - 1;
+  const significant = mantissa.replace(".", "").replace(/0+$/, "") || "0";
+  return `${sign}$0.0${subscript(zeros)}${significant}`;
 }
 
 /// Percent change between two prices. null when there is nothing to compare to.
