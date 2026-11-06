@@ -537,6 +537,71 @@ export function useCoinStats(coin?: Coin) {
   };
 }
 
+// ------------------------------------------------------------- earnings
+
+const feeSplitEvent = parseAbiItem(
+  "event FeeSplit(address indexed trader, bytes32 indexed id, uint256 fee, address followed, uint256 traderCut, address referrer, uint256 referrerCut, uint256 treasuryCut)",
+);
+
+export type Earnings = {
+  /// Paid to this wallet because someone copied it.
+  asCopiedTrader: bigint;
+  /// Paid to this wallet because someone it referred exited in profit.
+  asReferrer: bigint;
+  total: bigint;
+  /// How many separate exits paid them.
+  payouts: number;
+};
+
+/**
+ * What a wallet has been paid by the hook, ever.
+ *
+ * Summed from FeeSplit events rather than read from claimable(), because
+ * claimable() is only what is still unclaimed -- it drops to zero the moment
+ * they withdraw, which would make a trader who has been paid and cashed out
+ * look like they had never earned anything.
+ */
+export function useEarnings(who?: Address) {
+  const client = usePublicClient();
+  return useQuery({
+    queryKey: ["earnings", who],
+    enabled: !!client && !!who && isDeployed,
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+    queryFn: async (): Promise<Earnings> => {
+      const logs = await getLogsChunked(client as PublicClient, {
+        address: addr.hook,
+        event: feeSplitEvent,
+      });
+      const me = who!.toLowerCase();
+      let asCopiedTrader = 0n;
+      let asReferrer = 0n;
+      let payouts = 0;
+      for (const l of logs) {
+        const a = (l as unknown as {
+          args: {
+            followed: Address;
+            traderCut: bigint;
+            referrer: Address;
+            referrerCut: bigint;
+          };
+        }).args;
+        let hit = false;
+        if (a.followed?.toLowerCase() === me) {
+          asCopiedTrader += a.traderCut;
+          hit = true;
+        }
+        if (a.referrer?.toLowerCase() === me) {
+          asReferrer += a.referrerCut;
+          hit = true;
+        }
+        if (hit) payouts += 1;
+      }
+      return { asCopiedTrader, asReferrer, total: asCopiedTrader + asReferrer, payouts };
+    },
+  });
+}
+
 // --------------------------------------------------------- trader profile
 
 export type TraderProfile = {

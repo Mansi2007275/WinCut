@@ -8,6 +8,7 @@ import { useAccount } from "wagmi";
 import { Page } from "@/components/Shell";
 import {
   AddressLink,
+  Avatar,
   Badge,
   Button,
   Card,
@@ -15,15 +16,16 @@ import {
   Empty,
   ErrorBox,
   HonestyBar,
+  SectionHeading,
   SkeletonRows,
   StatTile,
   TxLink,
 } from "@/components/ui";
-import { useCoins, useHead, useTrader } from "@/lib/data";
+import { reason } from "@/components/TradePanel";
+import { useCoins, useEarnings, useHead, useTrader } from "@/lib/data";
 import { isDeployed } from "@/lib/chain";
 import { copyLink } from "@/lib/referral";
-import { reason } from "@/components/TradePanel";
-import { ago, coins as fmtCoins, usd } from "@/lib/format";
+import { ago, coins as fmtCoins, short, usd } from "@/lib/format";
 
 export default function TraderPage() {
   return (
@@ -46,6 +48,7 @@ function TraderScreen() {
 
   const { address: me } = useAccount();
   const { profile, isLoading, error } = useTrader(target);
+  const earnings = useEarnings(target);
   const coins = useCoins();
   const head = useHead();
   const [copied, setCopied] = useState(false);
@@ -57,7 +60,6 @@ function TraderScreen() {
       </Page>
     );
   }
-
   if (!isDeployed) {
     return (
       <Page>
@@ -65,7 +67,6 @@ function TraderScreen() {
       </Page>
     );
   }
-
   if (isLoading) {
     return (
       <Page>
@@ -73,7 +74,6 @@ function TraderScreen() {
       </Page>
     );
   }
-
   if (error) {
     return (
       <Page>
@@ -100,19 +100,27 @@ function TraderScreen() {
 
   return (
     <Page>
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <h1 className="text-xl uppercase leading-none">Trader</h1>
-          <p className="mt-1 break-all font-mono text-xs">{target}</p>
-          <p className="mt-1">
-            <AddressLink address={target} label="open in explorer ↗" className="text-[10px]" />
+      {/* ------------------------------------------------------- header */}
+      <div className="flex items-center gap-3">
+        <Link
+          href="/board"
+          aria-label="Back to the leaderboard"
+          className="tap flex w-10 shrink-0 items-center justify-center rounded-pill border border-border bg-surface text-secondary transition-colors hover:text-text"
+        >
+          ‹
+        </Link>
+        <Avatar address={target} size={40} />
+        <div className="min-w-0 flex-1">
+          <p className="num truncate text-base leading-tight font-semibold">{short(target)}</p>
+          <p className="mt-0.5 text-[11px]">
+            <AddressLink address={target} label="open in explorer ↗" />
           </p>
         </div>
         <div className="flex shrink-0 flex-col items-end gap-1">
           {isMe && <Badge tone="accent">you</Badge>}
           {p?.isDumper && <DumperStamp />}
           {p && !p.isDumper && p.followers.length > 0 && p.followersPnl > 0n && (
-            <Badge tone="profit">honest</Badge>
+            <Badge tone="profit">Honest</Badge>
           )}
         </div>
       </div>
@@ -124,11 +132,12 @@ function TraderScreen() {
         />
       ) : (
         <>
-          {/* ------------------------- honesty ------------------------- */}
-          <Card tone={p.isDumper ? "loss" : "surface"} className={`p-4 ${p.isDumper ? "text-white" : ""}`}>
-            <p className="font-display text-sm uppercase">Followers&apos; profit</p>
-            <p className="mt-1 text-xs leading-snug opacity-80">
-              The only number that matters here: did the people who copied this wallet make money?
+          {/* ------------------------------------------------- honesty */}
+          <Card tone={p.isDumper ? "loss" : "surface"} className="p-4">
+            <p className="text-sm font-semibold">Followers&apos; profit</p>
+            <p className="mt-1 text-xs leading-snug text-secondary">
+              The only number that matters here: did the people who copied this wallet make
+              money?
             </p>
 
             <div className="mt-3 grid grid-cols-2 gap-2">
@@ -146,17 +155,43 @@ function TraderScreen() {
 
             <div className="mt-3">
               <div className="mb-1 flex items-baseline justify-between">
-                <span className="font-display text-[10px] uppercase opacity-70">Honesty</span>
-                <span className="money text-xs">
+                <span className="text-[10px] tracking-wide text-secondary uppercase">Honesty</span>
+                <span className="num text-xs">
                   {p.honesty === null ? "—" : p.honesty.toFixed(2)}
                 </span>
               </div>
               <HonestyBar score={p.honesty} />
-              <p className="mt-1 font-mono text-[10px] leading-snug opacity-70">
+              <p className="mt-1.5 text-[11px] leading-snug text-secondary">
                 Followers&apos; PnL divided by their own. Above 1 means the people copying made
                 more than the trader did; below 0 means the trader profited while followers lost.
               </p>
             </div>
+          </Card>
+
+          {/* ------------------------------- earned from followers */}
+          <Card className="p-4">
+            <div className="flex items-baseline justify-between gap-2">
+              <p className="text-sm font-semibold">Earned from followers</p>
+              <p className="num text-base font-semibold text-profit">
+                {earnings.isPending ? "…" : usd(earnings.data?.total)}
+              </p>
+            </div>
+            <div className="mt-2 grid grid-cols-2 gap-2">
+              <StatTile
+                label="As copied trader"
+                value={usd(earnings.data?.asCopiedTrader)}
+                sub="50% of each fee"
+              />
+              <StatTile
+                label="As referrer"
+                value={usd(earnings.data?.asReferrer)}
+                sub="20% of each fee"
+              />
+            </div>
+            <p className="mt-2 text-[11px] leading-snug text-secondary">
+              Summed from every FeeSplit event this wallet appears in, so it counts what they have
+              been paid in total — not just what is still sitting unclaimed in the hook.
+            </p>
           </Card>
 
           <div className="grid grid-cols-3 gap-2">
@@ -170,86 +205,83 @@ function TraderScreen() {
             <StatTile label="Copying" value={p.copying.length} />
           </div>
 
-          {/* --------------------------- copy --------------------------- */}
+          {/* ---------------------------------------------------- copy */}
           {!isMe && (
             <Card tone="accent" className="p-4">
-              <p className="font-display text-sm uppercase">Copy this trader</p>
-              <p className="mt-1 text-xs leading-snug">
+              <p className="text-sm font-semibold text-accent">Copy this trader</p>
+              <p className="mt-1 text-xs leading-snug text-text/85">
                 Your buy records them on chain. They earn 50% of the fee — but only out of your
                 profit. If you exit at a loss, they earn nothing.
               </p>
               <div className="mt-3 flex flex-wrap gap-2">
                 {coins.data?.slice(0, 3).map((c) => (
                   <Link key={c.address} href={`/coin/${c.address}?follow=${target}`}>
-                    <span className="nb-sm nb-press inline-block bg-ink px-3 py-2 font-display text-[10px] uppercase text-brand">
+                    <span className="tap inline-flex items-center rounded-btn bg-accent px-3 text-xs font-semibold text-white">
                       Copy on {c.symbol}
                     </span>
                   </Link>
                 ))}
               </div>
               <Button tone="elevated" className="mt-3 w-full" onClick={share}>
-                {copied ? "Link copied" : "Copy invite link"}
+                {copied ? "Link copied ✓" : "Copy invite link"}
               </Button>
-              <p className="mt-2 break-all font-mono text-[10px] text-ink/60">
-                {copyLink(target)}
-              </p>
+              <p className="mt-2 text-[11px] break-all text-secondary">{copyLink(target)}</p>
             </Card>
           )}
 
-          {/* ------------------------- history ------------------------- */}
-          <div>
-            <h2 className="mb-2 text-lg uppercase">Trade history</h2>
-            <div className="flex flex-col gap-2">
+          {/* ------------------------------------------------- history */}
+          <section className="flex flex-col gap-2">
+            <SectionHeading>Trade history</SectionHeading>
+            <Card className="divide-y divide-border">
               {p.history.slice(0, 25).map((t) => {
                 const coin = coins.data?.find((c) => c.poolId === t.poolId);
                 return (
-                  <Card key={`${t.tx}-${t.kind}-${t.block}`} className="p-3">
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <p className="flex items-center gap-2">
-                          <Badge tone={t.kind === "buy" ? "accent" : "neutral"}>{t.kind}</Badge>
-                          {coin ? (
-                            <Link
-                              href={`/coin/${coin.address}`}
-                              className="font-display text-xs uppercase underline"
-                            >
-                              {coin.symbol}
-                            </Link>
-                          ) : (
-                            <span className="font-mono text-[10px] text-muted">
-                              {t.poolId.slice(0, 10)}…
-                            </span>
-                          )}
-                        </p>
-                        <p className="money mt-1 text-xs">
-                          {fmtCoins(t.coins)} · {usd(t.quoteAmount)}
-                        </p>
-                      </div>
-                      <div className="shrink-0 text-right">
-                        {t.kind === "sell" && (
-                          <>
-                            <p
-                              className={`money text-sm ${
-                                (t.pnl ?? 0n) >= 0n ? "text-[#00a152]" : "text-[#d32f45]"
-                              }`}
-                            >
-                              {usd(t.pnl, { sign: true })}
-                            </p>
-                            <p className="money text-[10px] text-muted">
-                              fee {usd(t.fee)}
-                              {(t.fee ?? 0n) === 0n && " · free"}
-                            </p>
-                          </>
+                  <div key={`${t.tx}-${t.kind}-${t.block}`} className="flex items-center gap-3 p-3">
+                    <div className="min-w-0 flex-1">
+                      <p className="flex items-center gap-2 text-[13px]">
+                        <span
+                          className={`font-semibold ${
+                            t.kind === "sell" ? "text-loss" : "text-profit"
+                          }`}
+                        >
+                          {t.kind === "sell" ? "Sell" : "Buy"}
+                        </span>
+                        {coin ? (
+                          <Link
+                            href={`/coin/${coin.address}`}
+                            className="font-semibold underline-offset-2 hover:underline"
+                          >
+                            {coin.symbol}
+                          </Link>
+                        ) : (
+                          <span className="num text-[11px] text-secondary">
+                            {t.poolId.slice(0, 10)}…
+                          </span>
                         )}
-                        <p className="font-mono text-[10px] text-muted">{ago(t.block, head.data)}</p>
-                        <TxLink hash={t.tx} />
-                      </div>
+                      </p>
+                      <p className="num mt-0.5 text-[11px] text-secondary">
+                        {fmtCoins(t.coins)} · {ago(t.block, head.data)} ·{" "}
+                        <TxLink hash={t.tx}>explorer ↗</TxLink>
+                      </p>
                     </div>
-                  </Card>
+                    <div className="shrink-0 text-right">
+                      <p className="num text-sm font-semibold">{usd(t.quoteAmount)}</p>
+                      {t.kind === "sell" && (
+                        <p
+                          className={`num text-[11px] ${
+                            (t.pnl ?? 0n) >= 0n ? "text-profit" : "text-loss"
+                          }`}
+                        >
+                          {usd(t.pnl, { sign: true })}
+                          {(t.fee ?? 0n) === 0n ? " · fee $0" : ` · fee ${usd(t.fee)}`}
+                        </p>
+                      )}
+                    </div>
+                  </div>
                 );
               })}
-            </div>
-          </div>
+            </Card>
+          </section>
         </>
       )}
     </Page>
