@@ -125,6 +125,32 @@ function TraderScreen() {
         </div>
       </div>
 
+        {/* ------------------------------- earned from followers */}
+        <Card className="p-4">
+          <div className="flex items-baseline justify-between gap-2">
+            <p className="text-sm font-semibold">Earned from followers</p>
+            <p className="num text-base font-semibold text-profit">
+              {earnings.isPending ? "…" : usd(earnings.data?.total)}
+            </p>
+          </div>
+          <div className="mt-2 grid grid-cols-2 gap-2">
+            <StatTile
+              label="As copied trader"
+              value={usd(earnings.data?.asCopiedTrader)}
+              sub="50% of each fee"
+            />
+            <StatTile
+              label="As referrer"
+              value={usd(earnings.data?.asReferrer)}
+              sub="20% of each fee"
+            />
+          </div>
+          <p className="mt-2 text-[11px] leading-snug text-secondary">
+            Summed from every FeeSplit event this wallet appears in, so it counts what they have
+            been paid in total — not just what is still sitting unclaimed in the hook.
+          </p>
+        </Card>
+
       {!p || p.trades === 0 ? (
         <Empty
           title="No closed trades yet"
@@ -166,32 +192,6 @@ function TraderScreen() {
                 more than the trader did; below 0 means the trader profited while followers lost.
               </p>
             </div>
-          </Card>
-
-          {/* ------------------------------- earned from followers */}
-          <Card className="p-4">
-            <div className="flex items-baseline justify-between gap-2">
-              <p className="text-sm font-semibold">Earned from followers</p>
-              <p className="num text-base font-semibold text-profit">
-                {earnings.isPending ? "…" : usd(earnings.data?.total)}
-              </p>
-            </div>
-            <div className="mt-2 grid grid-cols-2 gap-2">
-              <StatTile
-                label="As copied trader"
-                value={usd(earnings.data?.asCopiedTrader)}
-                sub="50% of each fee"
-              />
-              <StatTile
-                label="As referrer"
-                value={usd(earnings.data?.asReferrer)}
-                sub="20% of each fee"
-              />
-            </div>
-            <p className="mt-2 text-[11px] leading-snug text-secondary">
-              Summed from every FeeSplit event this wallet appears in, so it counts what they have
-              been paid in total — not just what is still sitting unclaimed in the hook.
-            </p>
           </Card>
 
           <div className="grid grid-cols-3 gap-2">

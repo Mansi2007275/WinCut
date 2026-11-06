@@ -399,77 +399,46 @@ async function blockTimes(client: PublicClient, blocks: bigint[]): Promise<Map<s
 export function usePriceSeries(poolId?: `0x${string}`, quoteIsCurrency0 = true) {
   const client = usePublicClient();
   return useQuery({
-    // Deliberately NOT keyed per pool.
-    //
-    // One query per coin meant Discover fired a full log scan for every row at
-    // once, and Arc's RPC rate-limits: the scans spent their whole retry
-    // budget backing off and the rows sat on "—" for a minute. One scan of the
-    // PoolManager's Swap events covers every pool, and react-query dedupes it
-    // across all the rows that ask.
-    queryKey: ["swaps"],
-    enabled: !!client && isDeployed,
+    queryKey: ["priceSeries", poolId, quoteIsCurrency0],
+    enabled: !!client && !!poolId && isDeployed,
     refetchInterval: 30_000,
     staleTime: 15_000,
-    queryFn: async (): Promise<RawSwap[]> => {
+    queryFn: async (): Promise<PricePoint[]> => {
+      // Filtered by pool id SERVER-SIDE. Dropping this filter to share one
+      // scan across every coin looked like a saving and was the opposite: it
+      // pulls every pool's swaps on Arc into each 5,000-block window, and the
+      // RPC answers "Request exceeds defined limit" once the response is big
+      // enough. Narrowing here is what keeps the response small.
       const logs = await getLogsChunked(client as PublicClient, {
         address: addr.poolManager,
         event: swapEvent,
+        eventArgs: { id: poolId! },
       });
-      const raw = logs
+
+      const points = logs
         .map((l) => {
           const a = (l as unknown as {
-            args: {
-              id: `0x${string}`;
-              sqrtPriceX96: bigint;
-              amount0: bigint;
-              amount1: bigint;
-            };
+            args: { sqrtPriceX96: bigint; amount0: bigint; amount1: bigint };
           }).args;
+          // amount0 is the quote side, signed from the pool's perspective.
+          const q = quoteIsCurrency0 ? a.amount0 : a.amount1;
           return {
-            id: a.id,
             block: l.blockNumber!,
-            sqrtPriceX96: a.sqrtPriceX96,
-            amount0: a.amount0,
-            amount1: a.amount1,
+            price: priceFromSqrtX96(a.sqrtPriceX96, quoteIsCurrency0),
+            volumeQuote: q < 0n ? -q : q,
           };
         })
+        .filter((p) => p.price > 0)
         .sort((x, y) => Number(x.block - y.block));
 
       const times = await blockTimes(
         client as PublicClient,
-        raw.map((r) => r.block),
+        points.map((p) => p.block),
       );
-      return raw.map((r) => ({ ...r, time: times.get(String(r.block)) }));
+      return points.map((p) => ({ ...p, time: times.get(String(p.block)) }));
     },
-    // The pool-specific shaping happens here, so every coin reads the same
-    // cached scan and only the cheap projection differs.
-    select: (raw: RawSwap[]): PricePoint[] =>
-      raw
-        .filter((r) => !poolId || r.id === poolId)
-        .map((r) => {
-          // amount0 is the quote side, signed from the pool's perspective.
-          const q = quoteIsCurrency0 ? r.amount0 : r.amount1;
-          return {
-            block: r.block,
-            price: priceFromSqrtX96(r.sqrtPriceX96, quoteIsCurrency0),
-            volumeQuote: q < 0n ? -q : q,
-            time: r.time,
-          };
-        })
-        .filter((p) => p.price > 0),
   });
 }
-
-/// One Swap log, unshaped. The quote side depends on the pool, so the raw
-/// amounts are cached and each pool projects its own view with `select`.
-type RawSwap = {
-  id: `0x${string}`;
-  block: bigint;
-  sqrtPriceX96: bigint;
-  amount0: bigint;
-  amount1: bigint;
-  time?: number;
-};
 
 // ------------------------------------------------------------ coin stats
 
