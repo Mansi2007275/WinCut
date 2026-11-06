@@ -153,11 +153,36 @@ export function FaucetLink({ className = "" }: { className?: string }) {
 }
 
 /// Connect button that actually shows why it failed.
-export function ConnectCta({ label = "Connect wallet" }: { label?: string }) {
+///
+/// `compact` is for the top bar, which is a 7.5rem slot. Rendering the full
+/// NoWalletBanner card in there wrapped every line to a single word at 390px
+/// ("NO WALLET / FOUND", "INSTALL / METAMASK") and repeated a card the page
+/// body was already showing. The bar gets a link; the page keeps the card.
+export function ConnectCta({
+  label = "Connect wallet",
+  compact = false,
+}: {
+  label?: string;
+  compact?: boolean;
+}) {
   const { connect, connectors, isPending, error } = useConnect();
   const has = useHasInjected();
 
-  if (has === false) return <NoWalletBanner />;
+  if (has === false) {
+    if (compact) {
+      return (
+        <a
+          href="https://metamask.io/download/"
+          target="_blank"
+          rel="noreferrer"
+          className="nb-sm nb-press block whitespace-nowrap bg-white px-3 py-2 text-center font-display text-xs uppercase"
+        >
+          Get wallet ↗
+        </a>
+      );
+    }
+    return <NoWalletBanner />;
+  }
 
   return (
     <div className="flex flex-col gap-2">

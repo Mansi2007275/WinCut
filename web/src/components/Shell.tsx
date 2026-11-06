@@ -95,8 +95,8 @@ export function TopBar() {
 /// The top bar needs a small connect button, not the full card with errors.
 function CompactConnect() {
   return (
-    <div className="w-[7.5rem]">
-      <ConnectCta label="Connect" />
+    <div className="w-[7.5rem] shrink-0">
+      <ConnectCta label="Connect" compact />
     </div>
   );
 }
