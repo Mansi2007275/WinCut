@@ -201,7 +201,9 @@ export default function LaunchPage() {
                   onChange={(e) => setSymbol(e.target.value.slice(0, 10))}
                   placeholder="e.g. MNSN"
                   aria-label="Ticker"
-                  className="tap num w-full rounded-btn border border-border bg-elevated px-3 text-base uppercase outline-none focus:border-accent/60"
+                  // `uppercase` applies to the placeholder too, so the hint
+                  // rendered as "E.G. MNSN". Only the typed value should shout.
+                  className="tap num w-full rounded-btn border border-border bg-elevated px-3 text-base uppercase outline-none placeholder:normal-case focus:border-accent/60"
                 />
               </div>
               {symbol && cleanSymbol !== symbol.toUpperCase() && (
