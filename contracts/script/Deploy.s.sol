@@ -21,6 +21,9 @@ import {WinCutQuoter} from "../src/periphery/WinCutQuoter.sol";
 ///   UNIVERSAL_ROUTER the router to trust for attribution
 ///   TREASURY         fee recipient
 ///   MAX_TRADE_SIZE   per-trade cap in QUOTE units, 0 to disable
+///   FINAL_OWNER      who ends up owning the hook. The deployer owns it just
+///                    long enough to wire the launcher and trust the router,
+///                    then hands it over. Defaults to TREASURY.
 contract Deploy is Script {
     struct Config {
         address poolManager;
@@ -29,6 +32,7 @@ contract Deploy is Script {
         address treasury;
         uint256 maxTradeSize;
         address owner;
+        address finalOwner;
     }
 
     /// @dev CREATE2_FACTORY (0x4e59...4956C) comes from forge-std CommonBase.
@@ -45,7 +49,11 @@ contract Deploy is Script {
             // constructor: the hook is deployed via the CREATE2 factory, so
             // msg.sender there is the factory, which would own the hook and lock
             // the deployer out of setLauncher().
-            owner: msg.sender
+            owner: msg.sender,
+            // Ownership is handed over at the end of _deploy. The deployer
+            // cannot simply be the final owner, because the hook has to be
+            // wired (setLauncher, setTrustedRouter) by whoever owns it first.
+            finalOwner: vm.envOr("FINAL_OWNER", vm.envAddress("TREASURY"))
         });
 
         (address hook, address launcher, address quoter, address winCutQuoter) = _deploy(cfg);
@@ -97,6 +105,17 @@ contract Deploy is Script {
         winCutQuoterAddr = address(new WinCutQuoter(IPoolManager(cfg.poolManager), hook));
         quoterAddr = winCutQuoterAddr;
 
+        // Hand the hook over. Everything that needs the owner is already done,
+        // so from here on only FINAL_OWNER can pause it, retarget the treasury
+        // or trust another router. The deployer key becomes powerless, which is
+        // the point: it is a throwaway.
+        if (cfg.finalOwner != cfg.owner) {
+            hook.transferOwnership(cfg.finalOwner);
+        }
+        require(hook.owner() == cfg.finalOwner, "ownership transfer failed");
+        require(hook.treasury() == cfg.treasury, "treasury mismatch");
+        require(hook.trustedRouter(cfg.universalRouter), "router not trusted");
+
         vm.stopBroadcast();
     }
 
@@ -113,6 +132,7 @@ contract Deploy is Script {
         console.log("treasury       :", cfg.treasury);
         console.log("V4Quoter       :", quoter);
         console.log("WinCutQuoter   :", winCutQuoter);
-        console.log("owner          :", cfg.owner);
+        console.log("deployer       :", cfg.owner);
+        console.log("final owner    :", cfg.finalOwner);
     }
 }
