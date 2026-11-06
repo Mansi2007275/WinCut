@@ -2,36 +2,51 @@
 
 import { Suspense, useMemo, useState } from "react";
 import Link from "next/link";
-import { motion } from "framer-motion";
-import { useAccount, usePublicClient, useWalletClient } from "wagmi";
+import { AnimatePresence, motion } from "framer-motion";
+import { useAccount, useBalance, usePublicClient, useWalletClient } from "wagmi";
 import { Page } from "@/components/Shell";
 import {
   AddressLink,
+  Avatar,
   Badge,
   Button,
   Card,
   Chip,
+  ColumnHeader,
   Empty,
   ErrorBox,
+  Money,
+  SectionHeading,
   SkeletonRows,
-  StatTile,
+  Tabs,
   TxLink,
+  useFlash,
 } from "@/components/ui";
 import { FaucetLink } from "@/components/NetworkGate";
 import { useToast } from "@/components/Toast";
 import { useCoins, useCoinStats, useHead, useLeaderboard, useTrades, type Coin } from "@/lib/data";
-import { isDeployed } from "@/lib/chain";
+import { isDeployed, QUOTE } from "@/lib/chain";
 import { useReferral } from "@/lib/referral";
+import { useWatchlist } from "@/lib/watchlist";
 import { buyCoin } from "@/lib/trade";
 import { reason } from "@/components/TradePanel";
-import { ago, coins as fmtCoins, price as fmtPrice, usd } from "@/lib/format";
+import { ago, coins as fmtCoins, price as fmtPrice, short, usd } from "@/lib/format";
+
+type TabId = "trending" | "new" | "traders" | "watchlist";
+
+const TABS = [
+  { id: "trending" as const, label: "Trending" },
+  { id: "new" as const, label: "New" },
+  { id: "traders" as const, label: "Top traders" },
+  { id: "watchlist" as const, label: "Watchlist" },
+];
 
 export default function DiscoverPage() {
   return (
     <Suspense
       fallback={
         <Page>
-          <SkeletonRows rows={4} height="h-28" />
+          <SkeletonRows rows={4} height="h-24" />
         </Page>
       }
     >
@@ -45,16 +60,50 @@ function Discover() {
   const trades = useTrades();
   const head = useHead();
   const { rows } = useLeaderboard();
+  const { address, isConnected } = useAccount();
+  const { data: bal } = useBalance({ address });
+  const watchlist = useWatchlist();
 
-  const totalFees = useMemo(
-    () => (trades.data ?? []).reduce((s, t) => s + (t.fee ?? 0n), 0n),
-    [trades.data],
-  );
-  const freeExits = useMemo(
-    () => (trades.data ?? []).filter((t) => t.kind === "sell" && (t.fee ?? 0n) === 0n).length,
-    [trades.data],
-  );
-  const dumpers = (rows ?? []).filter((r) => r.isDumper).length;
+  const [tab, setTab] = useState<TabId>("trending");
+  const [query, setQuery] = useState("");
+
+  // Memoised so the ordering/filtering memos below do not re-run every render
+  // on a fresh array identity.
+  const coins = useMemo(() => coinsQ.data ?? [], [coinsQ.data]);
+
+  /**
+   * Ordering is derived, never stored.
+   *
+   * "Trending" is by swap count in the pool, which is the only activity signal
+   * the chain actually gives us. "New" is latest launch first, which is the
+   * launcher's own array order reversed.
+   */
+  const ordered = useMemo(() => {
+    const swapsOf = (c: Coin) =>
+      (trades.data ?? []).filter((t) => t.poolId === c.poolId).length;
+    if (tab === "new") return [...coins].reverse();
+    if (tab === "watchlist") return coins.filter((c) => watchlist.has(c.address));
+    if (tab === "trending") return [...coins].sort((a, b) => swapsOf(b) - swapsOf(a));
+    return coins;
+  }, [coins, tab, trades.data, watchlist]);
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return ordered;
+    return ordered.filter(
+      (c) =>
+        c.symbol.toLowerCase().includes(q) ||
+        c.name.toLowerCase().includes(q) ||
+        c.address.toLowerCase().includes(q) ||
+        c.creator.toLowerCase().includes(q),
+    );
+  }, [ordered, query]);
+
+  const traderRows = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const all = rows ?? [];
+    return q ? all.filter((r) => r.trader.toLowerCase().includes(q)) : all;
+  }, [rows, query]);
 
   if (!isDeployed) {
     return (
@@ -63,14 +112,6 @@ function Discover() {
           title="Waiting on a deployment"
           hint="Once the contracts are live on Arc testnet, every coin and trade on this screen is read straight from the chain."
         />
-      </Page>
-    );
-  }
-
-  if (coinsQ.isLoading) {
-    return (
-      <Page>
-        <SkeletonRows rows={4} height="h-28" />
       </Page>
     );
   }
@@ -85,65 +126,105 @@ function Discover() {
 
   return (
     <Page>
-      {/* The pitch, stated once, with real numbers behind it. */}
-      <Card tone="accent" className="p-4">
-        <p className="font-display text-base uppercase leading-tight">
-          Every trading app gets paid when you lose. We don&apos;t.
-        </p>
-        <p className="mt-1 text-xs leading-snug">
-          10% of your <em>profit</em> only. A losing exit costs $0 and banks a credit against your
-          next win.
-        </p>
-        {/* The full log scan takes a few seconds. Until it lands these are all
-            zero, and rendering that reads as "WinCut has never charged a fee"
-            rather than "still counting" -- the same confidently-wrong-number
-            problem as the dropped log windows. Show a dash instead. */}
-        <div className="mt-3 grid grid-cols-3 gap-2">
-          <StatTile label="Fees charged" value={trades.isPending ? "…" : usd(totalFees)} />
-          <StatTile
-            label="Free exits"
-            value={trades.isPending ? "…" : freeExits}
-            sub="charged $0"
-          />
-          <StatTile
-            label="Dumpers"
-            value={trades.isPending ? "…" : dumpers}
-            tone={dumpers ? "loss" : "text"}
-          />
+      {/* Balance. The one number the user needs before they can do anything. */}
+      <Card className="p-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-xs text-secondary">Cash · {QUOTE.symbol} on Arc Testnet</p>
+            <p className="num mt-1 text-[28px] leading-none font-semibold">
+              {isConnected ? <Money value={bal?.value} /> : "—"}
+            </p>
+          </div>
+          <FaucetLink className="shrink-0 pt-1 text-xs" />
         </div>
       </Card>
 
-      {!coinsQ.data?.length ? (
-        <>
-          <Empty
-            title="No coins yet. Be the first."
-            hint="Nothing here is seeded. This list only ever shows coins launched by real wallets on Arc testnet."
-          />
-          <Link href="/launch">
-            <Button tone="accent" className="w-full py-4 text-lg">
-              Launch the first coin
-            </Button>
-          </Link>
-          <FaucetLink className="self-center" />
-        </>
+      <label className="relative block">
+        <span className="sr-only">Search coins or traders</span>
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          aria-hidden
+          className="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-secondary"
+        >
+          <circle cx="11" cy="11" r="6.5" stroke="currentColor" strokeWidth="1.6" />
+          <path d="m16 16 4 4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+        </svg>
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search coins or traders"
+          className="tap w-full rounded-btn border border-border bg-surface pr-3 pl-9 text-sm outline-none placeholder:text-secondary focus:border-accent/60"
+        />
+      </label>
+
+      <Tabs options={TABS} value={tab} onChange={setTab} />
+
+      {tab === "traders" ? (
+        <TopTraders rows={traderRows} loading={trades.isPending} />
+      ) : coinsQ.isLoading ? (
+        <SkeletonRows rows={3} height="h-24" />
+      ) : !filtered.length ? (
+        <EmptyForTab tab={tab} query={query} hasAnyCoin={coins.length > 0} />
       ) : (
-        <div className="flex flex-col gap-3">
-          <div className="flex items-baseline justify-between">
-            <h2 className="text-lg uppercase">Coins</h2>
-            <span className="font-mono text-[10px] text-muted">
-              {coinsQ.data.length} live · block {head.data?.toString() ?? "…"}
+        <div className="flex flex-col gap-2">
+          <ColumnHeader>
+            <span>Coin</span>
+            <span className="flex gap-6">
+              <span>Price</span>
+              <span>Since launch</span>
             </span>
-          </div>
-          {coinsQ.data.map((c, i) => (
-            <CoinCard key={c.address} coin={c} index={i} head={head.data} />
+          </ColumnHeader>
+          {filtered.map((c, i) => (
+            <CoinRow key={c.address} coin={c} index={i} head={head.data} />
           ))}
         </div>
       )}
+
+      <LiveActivity head={head.data} />
     </Page>
   );
 }
 
-function CoinCard({ coin, index, head }: { coin: Coin; index: number; head?: bigint }) {
+function EmptyForTab({
+  tab,
+  query,
+  hasAnyCoin,
+}: {
+  tab: TabId;
+  query: string;
+  hasAnyCoin: boolean;
+}) {
+  if (query.trim()) {
+    return <Empty title="Nothing matches that" hint="Search by symbol, name, or any address." />;
+  }
+  if (tab === "watchlist") {
+    return (
+      <Empty
+        title="Nothing starred yet"
+        hint="Tap the star on a coin page to keep it here. The list lives in this browser only — there is nothing on chain that records a watchlist."
+      />
+    );
+  }
+  if (!hasAnyCoin) {
+    return (
+      <>
+        <Empty
+          title="No coins yet. Be the first."
+          hint="Nothing here is seeded. This list only ever shows coins launched by real wallets on Arc testnet."
+        />
+        <Link href="/launch" className="mt-2 block">
+          <Button className="w-full py-3.5 text-base">Launch the first coin</Button>
+        </Link>
+      </>
+    );
+  }
+  return <Empty title="Nothing here yet" />;
+}
+
+/* ------------------------------------------------------------- coin rows */
+
+function CoinRow({ coin, index, head }: { coin: Coin; index: number; head?: bigint }) {
   const { stats, isLoading } = useCoinStats(coin);
   const trades = useTrades();
   const { follow, referrer } = useReferral();
@@ -152,11 +233,7 @@ function CoinCard({ coin, index, head }: { coin: Coin; index: number; head?: big
   const { data: wallet } = useWalletClient();
   const toast = useToast();
   const [busy, setBusy] = useState<string | null>(null);
-
-  const latest = useMemo(
-    () => (trades.data ?? []).find((t) => t.poolId === coin.poolId),
-    [trades.data, coin.poolId],
-  );
+  const flash = useFlash(stats?.price);
 
   async function quickBuy(dollars: string) {
     if (!wallet || !client) return;
@@ -194,94 +271,226 @@ function CoinCard({ coin, index, head }: { coin: Coin; index: number; head?: big
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 10 }}
+      layout
+      initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: Math.min(index * 0.04, 0.2), duration: 0.22 }}
+      transition={{ delay: Math.min(index * 0.03, 0.15), duration: 0.2 }}
     >
-      <Card className="p-4">
-        <Link href={`/coin/${coin.address}`} className="block">
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <p className="font-display text-lg uppercase leading-none">{coin.symbol}</p>
-              <p className="truncate text-xs text-muted">{coin.name}</p>
+      <Card className="overflow-hidden">
+        <Link href={`/coin/${coin.address}`} className="block p-3 transition-colors hover:bg-elevated/40">
+          <div className="flex items-center gap-3">
+            <Avatar address={coin.address} size={36} />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm leading-tight font-semibold">{coin.symbol}</p>
+              <p className="num mt-0.5 truncate text-[11px] text-secondary">
+                Vol {usd(stats?.volumeQuote)} · {stats?.holders ?? "—"} holder
+                {stats?.holders === 1 ? "" : "s"}
+              </p>
             </div>
             <div className="shrink-0 text-right">
-              <p className="money text-base leading-none">
+              <p className={`num text-sm leading-tight font-semibold ${flash}`}>
                 {isLoading ? "…" : fmtPrice(stats?.price ?? 0)}
               </p>
               {change !== null && change !== undefined && (
-                <p className={`money text-xs ${change >= 0 ? "text-[#00a152]" : "text-[#d32f45]"}`}>
+                <p
+                  className={`num mt-0.5 text-[11px] font-medium ${
+                    change >= 0 ? "text-profit" : "text-loss"
+                  }`}
+                >
                   {change >= 0 ? "+" : ""}
-                  {change.toFixed(1)}% since launch
+                  {change.toFixed(1)}%
                 </p>
               )}
             </div>
           </div>
 
-          <div className="mt-3 grid grid-cols-3 gap-2">
-            <StatTile label="Volume" value={usd(stats?.volumeQuote)} />
-            <StatTile label="Holders" value={stats?.holders ?? "—"} />
-            <StatTile label="Swaps" value={stats?.swaps ?? "—"} />
+          <div className="mt-2.5 flex flex-wrap items-center gap-x-2 gap-y-1">
+            <Badge tone="profit">Fee only on profit</Badge>
+            <span className="text-[11px] text-secondary">Uniswap v4 pool · WinCut hook</span>
           </div>
+
+          <p className="num mt-1.5 text-[11px] text-secondary">
+            Launched by {short(coin.creator)}
+            {stats?.launchBlock !== undefined && head !== undefined && (
+              <> · {ago(stats.launchBlock, head)}</>
+            )}
+          </p>
         </Link>
 
-        {/* The latest real trade in this pool. No placeholder when there is
-            none: a brand new coin genuinely has no trades. */}
-        <div className="mt-3 border-t-3 border-ink pt-2">
-          {latest ? (
-            <p className="flex flex-wrap items-baseline gap-x-2 font-mono text-[10px] text-muted">
-              <AddressLink address={latest.trader} tight />
-              <span>
-                {latest.kind === "buy" ? "bought" : "sold"} {fmtCoins(latest.coins)} for{" "}
-                {usd(latest.quoteAmount)}
-              </span>
-              {latest.kind === "sell" && (
-                <span className={(latest.pnl ?? 0n) >= 0n ? "text-[#00a152]" : "text-[#d32f45]"}>
-                  {usd(latest.pnl, { sign: true })}
-                  {(latest.fee ?? 0n) === 0n && " · fee $0"}
-                </span>
-              )}
-              <span>{ago(latest.block, head)}</span>
-              <TxLink hash={latest.tx} />
-            </p>
-          ) : (
-            <p className="font-mono text-[10px] text-muted">
-              {trades.isPending ? "Reading trades from chain…" : "No trades yet. Be the first."}
-            </p>
-          )}
-        </div>
-
-        {/* Quick buy. Buys are never charged, so one tap cannot cost a fee the
-            user did not see first. */}
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          <span className="font-display text-[10px] uppercase text-muted">Quick buy</span>
+        <div className="flex flex-wrap items-center gap-2 border-t border-border px-3 py-2.5">
+          <span className="text-[11px] text-secondary">Quick buy</span>
           {["10", "50", "100"].map((v) => (
             <Chip
               key={v}
               onClick={isConnected ? () => void quickBuy(v) : undefined}
               active={busy === v}
+              className="px-3 text-xs"
             >
               {busy === v ? "…" : `$${v}`}
             </Chip>
           ))}
           <Link href={`/coin/${coin.address}`} className="ml-auto">
-            <span className="nb-sm nb-press inline-block bg-ink px-3 py-2 font-display text-[10px] uppercase text-brand">
+            <span className="tap flex items-center rounded-btn bg-accent px-3 text-xs font-semibold text-white">
               Trade
             </span>
           </Link>
         </div>
+
         {!isConnected && (
-          <p className="mt-2 font-mono text-[10px] text-muted">
+          <p className="border-t border-border px-3 py-2 text-[11px] text-secondary">
             Connect a wallet to buy. Quick buy sends a real swap on Arc testnet.
           </p>
         )}
 
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          <Badge>creator</Badge>
-          <AddressLink address={coin.creator} tight className="text-[10px]" />
-          {follow && <Badge tone="accent">copying {follow.slice(0, 6)}…</Badge>}
-        </div>
+        {follow && (
+          <p className="border-t border-border px-3 py-2">
+            <Badge tone="accent">copying {short(follow)}</Badge>
+          </p>
+        )}
       </Card>
     </motion.div>
+  );
+}
+
+/* ----------------------------------------------------------- top traders */
+
+function TopTraders({
+  rows,
+  loading,
+}: {
+  rows: ReturnType<typeof useLeaderboard>["rows"];
+  loading: boolean;
+}) {
+  if (loading) return <SkeletonRows rows={3} height="h-16" />;
+  if (!rows?.length) {
+    return (
+      <Empty
+        title="No traders yet"
+        hint="A wallet appears here after its first exit through the WinCut hook."
+      />
+    );
+  }
+  return (
+    <div className="flex flex-col gap-2">
+      <ColumnHeader>
+        <span>Trader</span>
+        <span>Followers&apos; profit</span>
+      </ColumnHeader>
+      {rows.slice(0, 10).map((r, i) => (
+        <Link key={r.trader} href={`/trader/${r.trader}`}>
+          <Card className="flex items-center gap-3 p-3 transition-colors hover:bg-elevated/40">
+            <span className="num w-4 shrink-0 text-xs text-secondary">{i + 1}</span>
+            <Avatar address={r.trader} size={32} />
+            <div className="min-w-0 flex-1">
+              <p className="num truncate text-sm font-semibold">{short(r.trader)}</p>
+              <p className="num mt-0.5 text-[11px] text-secondary">
+                own {usd(r.ownPnl, { sign: true })} · {r.followers} follower
+                {r.followers === 1 ? "" : "s"}
+              </p>
+            </div>
+            <span
+              className={`num shrink-0 text-sm font-semibold ${
+                r.followersPnl >= 0n ? "text-profit" : "text-loss"
+              }`}
+            >
+              {usd(r.followersPnl, { sign: true })}
+            </span>
+          </Card>
+        </Link>
+      ))}
+    </div>
+  );
+}
+
+/* --------------------------------------------------------- live activity */
+
+function LiveActivity({ head }: { head?: bigint }) {
+  const trades = useTrades();
+  const coinsQ = useCoins();
+  const recent = (trades.data ?? []).slice(0, 8);
+
+  // A Trade carries the poolId, which is what the hook indexes by. The Copy
+  // link needs the coin page, so map it back through the launcher's list.
+  const coinOfPool = (poolId: string) =>
+    (coinsQ.data ?? []).find((c) => c.poolId === poolId)?.address;
+
+  return (
+    <section className="flex flex-col gap-2">
+      <SectionHeading
+        right={
+          <span className="flex items-center gap-1.5 text-[11px] text-secondary">
+            <span className="h-1.5 w-1.5 rounded-pill bg-profit" />
+            On chain
+          </span>
+        }
+      >
+        Live activity
+      </SectionHeading>
+
+      {trades.isPending ? (
+        <SkeletonRows rows={3} height="h-14" />
+      ) : !recent.length ? (
+        <Empty
+          title="No trades yet"
+          hint="Every row here is a real swap through the WinCut hook. Nothing is seeded."
+        />
+      ) : (
+        <Card className="divide-y divide-border">
+          <AnimatePresence initial={false}>
+            {recent.map((t) => (
+              <motion.div
+                key={t.tx + t.trader}
+                layout
+                initial={{ opacity: 0, y: -8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.2 }}
+                className="flex items-center gap-3 p-3"
+              >
+                <Avatar address={t.trader} size={30} />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-[13px]">
+                    <AddressLink address={t.trader} tight />{" "}
+                    <span className={t.kind === "sell" ? "text-loss" : "text-profit"}>
+                      {t.kind === "sell" ? "sold" : "bought"}
+                    </span>{" "}
+                    <span className="text-secondary">{fmtCoins(t.coins)}</span>
+                    {t.followed && (
+                      <span className="text-secondary">, copying {short(t.followed)}</span>
+                    )}
+                  </p>
+                  <p className="num mt-0.5 text-[11px] text-secondary">
+                    {usd(t.quoteAmount)}
+                    {t.kind === "sell" && <> · fee {usd(t.fee ?? 0n)}</>} · {ago(t.block, head)} ·{" "}
+                    <TxLink hash={t.tx}>explorer ↗</TxLink>
+                  </p>
+                </div>
+                <div className="shrink-0 text-right">
+                  {t.kind === "sell" && (
+                    <p
+                      className={`num text-sm font-semibold ${
+                        (t.pnl ?? 0n) >= 0n ? "text-profit" : "text-loss"
+                      }`}
+                    >
+                      {usd(t.pnl, { sign: true })}
+                    </p>
+                  )}
+                  {coinOfPool(t.poolId) && (
+                    <Link
+                      href={`/coin/${coinOfPool(t.poolId)}?follow=${t.trader}`}
+                      className="mt-1 block"
+                    >
+                      <span className="inline-flex items-center rounded-btn border border-border bg-elevated px-2.5 py-1.5 text-[11px] font-semibold">
+                        Copy
+                      </span>
+                    </Link>
+                  )}
+                </div>
+              </motion.div>
+            ))}
+          </AnimatePresence>
+        </Card>
+      )}
+    </section>
   );
 }

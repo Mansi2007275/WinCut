@@ -2,7 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { usePublicClient } from "wagmi";
-import { parseAbiItem, type Address, type PublicClient } from "viem";
+import { formatUnits, parseAbiItem, type Address, type PublicClient } from "viem";
 import { winCutHookAbi, winCutLauncherAbi, erc20Abi } from "@/config/abis";
 import { addr, isDeployed, quoteIsCurrency0, type PoolKey } from "./chain";
 import { changePct, priceFromSqrtX96 } from "./format";
@@ -402,6 +402,15 @@ export type CoinStats = {
   volumeQuote: bigint;
   swaps: number;
   holders: number;
+  /// Block of the pool's first swap, which is the launch. Used to say how old
+  /// a coin is without inventing a timestamp.
+  launchBlock?: bigint;
+  /// Price at launch and the highest price recorded, for the chart footer.
+  launchPrice?: number;
+  peakPrice?: number;
+  /// price x total supply. The supply is fixed and fully seeded at launch, so
+  /// this is a real figure rather than a circulating-supply guess.
+  marketCap?: number;
 };
 
 const transferEvent = parseAbiItem(
@@ -447,8 +456,22 @@ export function useCoinStats(coin?: Coin) {
     },
   });
 
+  // Fixed at deployment and never minted again, so one read is enough.
+  const supply = useQuery({
+    queryKey: ["totalSupply", coin?.address],
+    enabled: !!client && !!coin && isDeployed,
+    staleTime: Infinity,
+    queryFn: async (): Promise<bigint> =>
+      client!.readContract({
+        address: coin!.address,
+        abi: erc20Abi,
+        functionName: "totalSupply",
+      }),
+  });
+
+  const price = series.data?.at(-1)?.price ?? 0;
   const stats: CoinStats | undefined = series.data && {
-    price: series.data.at(-1)?.price ?? 0,
+    price,
     changePct:
       series.data.length > 1
         ? changePct(series.data[0].price, series.data.at(-1)!.price)
@@ -456,6 +479,13 @@ export function useCoinStats(coin?: Coin) {
     volumeQuote: series.data.reduce((s, p) => s + p.volumeQuote, 0n),
     swaps: series.data.length,
     holders: holders.data ?? 0,
+    launchBlock: series.data[0]?.block,
+    launchPrice: series.data[0]?.price,
+    peakPrice: series.data.length ? Math.max(...series.data.map((p) => p.price)) : undefined,
+    marketCap:
+      supply.data !== undefined
+        ? price * Number(formatUnits(supply.data, 18))
+        : undefined,
   };
 
   return {
