@@ -2,19 +2,34 @@ import type { AbiEvent, Address, PublicClient, Log } from "viem";
 import deployed from "@/config/deployed.json";
 
 /**
- * Chunked `getLogs`.
+ * Chunked `getLogs`, with finished windows cached for the life of the page.
  *
  * Arc's RPC rejects wide ranges with "requested range too large", and an Anvil
  * fork forwards historical queries upstream, so it inherits that limit. A naive
  * `fromBlock: latest - 200_000` therefore fails outright — which silently broke
  * the leaderboard and the feed until a script hit it.
  *
- * Two things keep this cheap:
+ * Three things keep this cheap:
  *   1. we never look further back than the block the hook was deployed at,
  *      since it cannot have emitted anything before that;
- *   2. anything still too wide is split into windows and merged.
+ *   2. anything still too wide is split into windows and merged;
+ *   3. a window that is entirely in the settled past is cached, because its
+ *      logs can never change again.
+ *
+ * Point 3 is what makes the app survive. The span from the deploy block grows
+ * by one block per block, forever: it was 2 windows at deploy and 10 a day
+ * later, and four event types at ten windows each is forty `eth_getLogs` on
+ * every single load. Arc's public RPC answers -32005 long before that
+ * finishes, which showed up as the over-limit warning silently disappearing
+ * and market cap stuck on a dash. With the cache, a refetch asks only about
+ * the window the chain is currently in.
  */
 const CHUNK = 5_000n;
+
+/// Blocks near the head are left uncached: a reorg can still rewrite them, and
+/// a cached-but-wrong window would be exactly the silent data loss this file
+/// exists to prevent.
+const REORG_SAFETY = 64n;
 
 /// Set by scripts/test-only/dev.sh at deploy time. Falls back to a recent window.
 const deployedAtBlock = (() => {
@@ -26,6 +41,20 @@ const deployedAtBlock = (() => {
     return undefined;
   }
 })();
+
+/// Keyed by contract, event, window and indexed-argument filter. Module-level
+/// so it is shared by every query and every component on the page.
+const settledWindows = new Map<string, Log[]>();
+
+function windowKey<T extends AbiEvent>(
+  args: { address: Address; event: T; eventArgs?: Record<string, unknown> },
+  from: bigint,
+  to: bigint,
+): string {
+  const name = (args.event as { name?: string }).name ?? "event";
+  const filter = args.eventArgs ? JSON.stringify(args.eventArgs) : "";
+  return `${args.address}|${name}|${filter}|${from}-${to}`;
+}
 
 export async function getLogsChunked<T extends AbiEvent>(
   client: PublicClient,
@@ -45,11 +74,25 @@ export async function getLogsChunked<T extends AbiEvent>(
   // Never scan before the hook existed.
   const floor = deployedAtBlock ?? (latest > span ? latest - span : 0n);
   const from = floor > latest ? 0n : floor;
+  const settledBelow = latest > REORG_SAFETY ? latest - REORG_SAFETY : 0n;
 
   const out: Log[] = [];
   for (let start = from; start <= latest; start += CHUNK) {
     const end = start + CHUNK - 1n > latest ? latest : start + CHUNK - 1n;
-    out.push(...(await getWindowWithRetry(client, args, start, end)));
+    const settled = end < settledBelow;
+    const key = windowKey(args, start, end);
+
+    if (settled) {
+      const hit = settledWindows.get(key);
+      if (hit) {
+        out.push(...hit);
+        continue;
+      }
+    }
+
+    const logs = await getWindowWithRetry(client, args, start, end);
+    if (settled) settledWindows.set(key, logs);
+    out.push(...logs);
   }
   return out;
 }
