@@ -40,6 +40,20 @@ export const QUOTE = {
 
 export const explorerTx = (hash: string) => `${deployed.explorer}/tx/${hash}`;
 export const explorerAddr = (a: string) => `${deployed.explorer}/address/${a}`;
+export const explorerBlock = (n: bigint | number) => `${deployed.explorer}/block/${n}`;
+
+export const FAUCET_URL = deployed.faucet;
+
+/**
+ * Whether WinCut itself exists on the configured chain.
+ *
+ * deployed.json ships with zero contract addresses, because the repo should not
+ * claim a deployment it does not have. Every screen checks this and says so,
+ * rather than firing reads at address(0) and rendering a confusing error.
+ */
+export const isDeployed =
+  addr.hook !== "0x0000000000000000000000000000000000000000" &&
+  addr.launcher !== "0x0000000000000000000000000000000000000000";
 
 export type PoolKey = {
   currency0: Address;

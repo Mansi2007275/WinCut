@@ -1,6 +1,8 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { explorerAddr, explorerTx } from "@/lib/chain";
+import { short, shorter } from "@/lib/format";
 
 export function Card({
   children,
@@ -233,5 +235,209 @@ export function TxState({
         </a>
       )}
     </div>
+  );
+}
+
+// ---------------------------------------------------------------- linking
+
+/**
+ * An address, always linked to the explorer.
+ *
+ * There are no display names in WinCut. An invented handle makes a stranger's
+ * wallet look like an account the app knows something about, which is a claim
+ * the app cannot back. A short address that opens arcscan is the honest form,
+ * and it is also the form a judge can verify mid-demo.
+ */
+export function AddressLink({
+  address,
+  tight,
+  label,
+  className = "",
+}: {
+  address?: string;
+  tight?: boolean;
+  label?: string;
+  className?: string;
+}) {
+  if (!address) return <span className="text-muted">—</span>;
+  return (
+    <a
+      href={explorerAddr(address)}
+      target="_blank"
+      rel="noreferrer"
+      title={address}
+      className={`font-mono underline decoration-ink/30 hover:decoration-ink ${className}`}
+    >
+      {label ?? (tight ? shorter(address) : short(address))}
+    </a>
+  );
+}
+
+/// A transaction hash, linked. Used on every trade row and result screen.
+export function TxLink({ hash, children }: { hash?: string; children?: ReactNode }) {
+  if (!hash) return null;
+  return (
+    <a
+      href={explorerTx(hash)}
+      target="_blank"
+      rel="noreferrer"
+      className="font-mono text-[10px] underline decoration-ink/30 hover:decoration-ink"
+    >
+      {children ?? "view on arcscan ↗"}
+    </a>
+  );
+}
+
+// -------------------------------------------------------------- skeletons
+
+/// A loading placeholder with the same box as the content it replaces, so
+/// nothing shifts when the real data lands.
+export function Skeleton({ className = "h-4 w-full" }: { className?: string }) {
+  return <div className={`animate-pulse bg-ink/10 ${className}`} />;
+}
+
+export function SkeletonRows({ rows = 3, height = "h-16" }: { rows?: number; height?: string }) {
+  return (
+    <div className="flex flex-col gap-3">
+      {Array.from({ length: rows }).map((_, i) => (
+        <div key={i} className={`nb bg-white ${height} p-3`}>
+          <Skeleton className="mb-2 h-3 w-1/3" />
+          <Skeleton className="h-3 w-2/3" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------ stats
+
+export function StatTile({
+  label,
+  value,
+  tone = "white",
+  sub,
+}: {
+  label: string;
+  value: ReactNode;
+  tone?: "white" | "brand" | "profit" | "loss";
+  sub?: ReactNode;
+}) {
+  const tones = {
+    white: "bg-white",
+    brand: "bg-brand",
+    profit: "bg-profit",
+    loss: "bg-loss text-white",
+  } as const;
+  return (
+    <div className={`nb-sm ${tones[tone]} p-3`}>
+      <p className="font-display text-[9px] uppercase tracking-wide opacity-70">{label}</p>
+      <p className="money mt-1 text-base leading-tight">{value}</p>
+      {sub && <p className="mt-0.5 text-[10px] leading-tight opacity-70">{sub}</p>}
+    </div>
+  );
+}
+
+// --------------------------------------------------------------- count-up
+
+/**
+ * Animates a bigint up to its final value.
+ *
+ * Steps through in integer arithmetic rather than interpolating a float, so the
+ * last frame is exactly the on-chain figure. Respects reduced-motion by jumping
+ * straight to the answer.
+ */
+export function useCountUp(target: bigint, ms = 700): bigint {
+  const [v, setV] = useState(0n);
+  useEffect(() => {
+    if (target === 0n) {
+      setV(0n);
+      return;
+    }
+    const reduce =
+      typeof window !== "undefined" &&
+      window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    if (reduce) {
+      setV(target);
+      return;
+    }
+    const steps = 18;
+    let i = 0;
+    const id = setInterval(() => {
+      i += 1;
+      setV((target * BigInt(i)) / BigInt(steps));
+      if (i >= steps) {
+        setV(target);
+        clearInterval(id);
+      }
+    }, ms / steps);
+    return () => clearInterval(id);
+  }, [target, ms]);
+  return v;
+}
+
+// --------------------------------------------------------------- confetti
+
+/**
+ * Confetti on a profitable exit, drawn on a canvas.
+ *
+ * Hand-rolled rather than pulling in a library: it is thirty lines, it matches
+ * the palette, and it self-destructs after one run so it cannot leak a rAF loop
+ * across navigations.
+ */
+export function Confetti({ run }: { run: boolean }) {
+  const ref = useRef<HTMLCanvasElement | null>(null);
+
+  useEffect(() => {
+    if (!run) return;
+    const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    if (reduce) return;
+    const canvas = ref.current;
+    const ctx = canvas?.getContext("2d");
+    if (!canvas || !ctx) return;
+
+    const w = (canvas.width = canvas.offsetWidth);
+    const h = (canvas.height = canvas.offsetHeight);
+    const colors = ["#FFE600", "#00E676", "#4D7CFF", "#FF3D57", "#000000"];
+    const bits = Array.from({ length: 70 }, () => ({
+      x: Math.random() * w,
+      y: -20 - Math.random() * h * 0.5,
+      s: 5 + Math.random() * 7,
+      vy: 1.6 + Math.random() * 2.6,
+      vx: -1 + Math.random() * 2,
+      rot: Math.random() * Math.PI,
+      vr: -0.14 + Math.random() * 0.28,
+      c: colors[Math.floor(Math.random() * colors.length)],
+    }));
+
+    let frame = 0;
+    let raf = 0;
+    const tick = () => {
+      frame += 1;
+      ctx.clearRect(0, 0, w, h);
+      for (const b of bits) {
+        b.x += b.vx;
+        b.y += b.vy;
+        b.rot += b.vr;
+        ctx.save();
+        ctx.translate(b.x, b.y);
+        ctx.rotate(b.rot);
+        ctx.fillStyle = b.c;
+        ctx.fillRect(-b.s / 2, -b.s / 2, b.s, b.s * 0.6);
+        ctx.restore();
+      }
+      if (frame < 150) raf = requestAnimationFrame(tick);
+      else ctx.clearRect(0, 0, w, h);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [run]);
+
+  if (!run) return null;
+  return (
+    <canvas
+      ref={ref}
+      aria-hidden
+      className="pointer-events-none fixed inset-0 z-[60] h-full w-full"
+    />
   );
 }

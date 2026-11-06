@@ -29,7 +29,15 @@ const deployedAtBlock = (() => {
 
 export async function getLogsChunked<T extends AbiEvent>(
   client: PublicClient,
-  args: { address: Address; event: T; latest?: bigint; fallbackSpan?: bigint },
+  args: {
+    address: Address;
+    event: T;
+    latest?: bigint;
+    fallbackSpan?: bigint;
+    /// Indexed-argument filter, e.g. { id: poolId }. Narrowing server-side is
+    /// much cheaper than fetching every pool's swaps and filtering here.
+    eventArgs?: Record<string, unknown>;
+  },
 ): Promise<Log[]> {
   const latest = args.latest ?? (await client.getBlockNumber());
   const span = args.fallbackSpan ?? 20_000n;
@@ -47,6 +55,7 @@ export async function getLogsChunked<T extends AbiEvent>(
         event: args.event,
         fromBlock: start,
         toBlock: end,
+        ...(args.eventArgs ? { args: args.eventArgs as never } : {}),
       });
       out.push(...logs);
     } catch {

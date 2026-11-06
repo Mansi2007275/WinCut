@@ -1,10 +1,22 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { Page } from "@/components/Shell";
-import { Card, Tabs, Loading, Empty, ErrorBox, DumperStamp, HonestyBar, Badge } from "@/components/ui";
+import {
+  AddressLink,
+  Badge,
+  Card,
+  DumperStamp,
+  Empty,
+  ErrorBox,
+  HonestyBar,
+  SkeletonRows,
+  Tabs,
+} from "@/components/ui";
 import { useLeaderboard, type LeaderRow } from "@/lib/data";
-import { usd, handle, short } from "@/lib/format";
+import { isDeployed } from "@/lib/chain";
+import { usd } from "@/lib/format";
 
 type BoardTab = "own" | "followers";
 
@@ -48,13 +60,13 @@ export default function BoardPage() {
         </div>
       )}
 
-      {isLoading && <Loading label="Reading hook events" />}
+      {isLoading && <SkeletonRows rows={3} height="h-32" />}
       {error && <ErrorBox title="Cannot read events" detail={String(error)} />}
 
-      {sorted && sorted.length === 0 && (
+      {isDeployed && sorted && sorted.length === 0 && (
         <Empty
-          title="No trades yet"
-          hint="No trades yet. Be the first."
+          title="No trades yet. Be the first."
+          hint="Every row on this board comes from a real exit on Arc testnet. Until someone closes a position there is genuinely nothing to rank."
         />
       )}
 
@@ -75,16 +87,21 @@ function RowCard({ row, rank, tab }: { row: LeaderRow; rank: number; tab: BoardT
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-display text-base">#{rank}</span>
-            <span className={`font-display text-base ${highlight ? "text-white" : ""}`}>
-              {handle(row.trader)}
-            </span>
+            {/* Addresses, not invented handles. A made-up name implies the app
+                knows who this is, which it does not. */}
+            <Link
+              href={`/trader/${row.trader}`}
+              className={`money text-sm underline ${highlight ? "text-white" : ""}`}
+            >
+              {row.trader.slice(0, 6)}…{row.trader.slice(-4)}
+            </Link>
             {row.isDumper && <DumperStamp />}
             {!row.isDumper && row.followers > 0 && row.followersPnl > 0n && (
               <Badge tone="profit">Honest</Badge>
             )}
           </div>
-          <p className={`font-mono text-[10px] ${highlight ? "text-white/80" : "text-muted"}`}>
-            {short(row.trader)}
+          <p className={`mt-0.5 ${highlight ? "text-white/80" : "text-muted"}`}>
+            <AddressLink address={row.trader} label="arcscan ↗" className="text-[10px]" />
           </p>
         </div>
 

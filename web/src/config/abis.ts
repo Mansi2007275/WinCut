@@ -72,6 +72,23 @@ export const winCutHookAbi = [
   { type: "function", name: "claim", stateMutability: "nonpayable", inputs: [], outputs: [{ type: "uint256" }] },
   { type: "function", name: "paused", stateMutability: "view", inputs: [], outputs: [{ type: "bool" }] },
   { type: "function", name: "treasury", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
+  { type: "function", name: "owner", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
+  {
+    type: "function",
+    name: "trustedRouter",
+    stateMutability: "view",
+    inputs: [{ type: "address" }],
+    outputs: [{ type: "bool" }],
+  },
+  {
+    type: "event",
+    name: "CreditConsumed",
+    inputs: [
+      { name: "trader", type: "address", indexed: true },
+      { name: "used", type: "uint256", indexed: false },
+      { name: "remaining", type: "uint256", indexed: false },
+    ],
+  },
   // --- events, used to build the feed and leaderboard ---
   {
     type: "event",
@@ -152,6 +169,37 @@ export const winCutLauncherAbi = [
     stateMutability: "view",
     inputs: [{ name: "coinAddr", type: "address" }],
     outputs: [{ type: "bytes32" }],
+  },
+  {
+    type: "function",
+    name: "launchCoin",
+    stateMutability: "payable",
+    inputs: [
+      { name: "name", type: "string" },
+      { name: "symbol", type: "string" },
+      { name: "metadataURI", type: "string" },
+      { name: "initialQuote", type: "uint256" },
+      { name: "initialSupply", type: "uint256" },
+    ],
+    outputs: [
+      { name: "coinAddr", type: "address" },
+      { name: "id", type: "bytes32" },
+    ],
+  },
+  {
+    type: "event",
+    name: "CoinLaunched",
+    inputs: [
+      { name: "coin", type: "address", indexed: true },
+      { name: "creator", type: "address", indexed: true },
+      { name: "id", type: "bytes32", indexed: true },
+      { name: "name", type: "string", indexed: false },
+      { name: "symbol", type: "string", indexed: false },
+      { name: "metadataURI", type: "string", indexed: false },
+      { name: "seededQuote", type: "uint256", indexed: false },
+      { name: "seededCoin", type: "uint256", indexed: false },
+      { name: "sqrtPriceX96", type: "uint160", indexed: false },
+    ],
   },
   {
     type: "function",
@@ -254,5 +302,39 @@ export const erc20Abi = [
     stateMutability: "nonpayable",
     inputs: [{ type: "address" }, { type: "uint256" }],
     outputs: [{ type: "bool" }],
+  },
+  { type: "function", name: "totalSupply", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
+  {
+    type: "event",
+    name: "Transfer",
+    inputs: [
+      { name: "from", type: "address", indexed: true },
+      { name: "to", type: "address", indexed: true },
+      { name: "value", type: "uint256", indexed: false },
+    ],
+  },
+] as const;
+
+/**
+ * The PoolManager's own Swap event: the only honest source for a price chart.
+ *
+ * sqrtPriceX96 is the pool's price AFTER the swap, so a series of these is the
+ * real price history. Deriving a chart from the hook's own Bought/Sold events
+ * instead would show the trader's average fill, not the pool price.
+ */
+export const poolManagerAbi = [
+  {
+    type: "event",
+    name: "Swap",
+    inputs: [
+      { name: "id", type: "bytes32", indexed: true },
+      { name: "sender", type: "address", indexed: true },
+      { name: "amount0", type: "int128", indexed: false },
+      { name: "amount1", type: "int128", indexed: false },
+      { name: "sqrtPriceX96", type: "uint160", indexed: false },
+      { name: "liquidity", type: "uint128", indexed: false },
+      { name: "tick", type: "int24", indexed: false },
+      { name: "fee", type: "uint24", indexed: false },
+    ],
   },
 ] as const;

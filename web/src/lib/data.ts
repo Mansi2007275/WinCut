@@ -4,7 +4,8 @@ import { useQuery } from "@tanstack/react-query";
 import { usePublicClient } from "wagmi";
 import { parseAbiItem, type Address, type PublicClient } from "viem";
 import { winCutHookAbi, winCutLauncherAbi, erc20Abi } from "@/config/abis";
-import { addr, type PoolKey } from "./chain";
+import { addr, isDeployed, quoteIsCurrency0, type PoolKey } from "./chain";
+import { changePct, priceFromSqrtX96 } from "./format";
 import { getLogsChunked } from "./logs";
 
 export type Coin = {
@@ -21,7 +22,7 @@ export function useCoins() {
   const client = usePublicClient();
   return useQuery({
     queryKey: ["coins"],
-    enabled: !!client,
+    enabled: !!client && isDeployed,
     queryFn: async (): Promise<Coin[]> => {
       const c = client!;
       const count = await c.readContract({
@@ -216,7 +217,7 @@ export function useTrades() {
   const client = usePublicClient();
   return useQuery({
     queryKey: ["trades"],
-    enabled: !!client,
+    enabled: !!client && isDeployed,
     refetchInterval: 10_000,
     queryFn: () => fetchTrades(client as PublicClient),
   });
@@ -304,4 +305,216 @@ export function useLeaderboard() {
   })();
 
   return { ...trades, rows };
+}
+
+// ------------------------------------------------------------- chain head
+
+/// The current block, used to render "3m ago" without fetching timestamps.
+export function useHead() {
+  const client = usePublicClient();
+  return useQuery({
+    queryKey: ["head"],
+    enabled: !!client,
+    refetchInterval: 5_000,
+    queryFn: () => client!.getBlockNumber(),
+  });
+}
+
+// ------------------------------------------------------- price from swaps
+
+const swapEvent = parseAbiItem(
+  "event Swap(bytes32 indexed id, address indexed sender, int128 amount0, int128 amount1, uint160 sqrtPriceX96, uint128 liquidity, int24 tick, uint24 fee)",
+);
+
+export type PricePoint = { block: bigint; price: number; volumeQuote: bigint };
+
+/**
+ * Real price history for one pool.
+ *
+ * Read from the PoolManager's own Swap events, whose sqrtPriceX96 is the pool
+ * price after each swap. This is the only source that reflects what the pool
+ * actually did; the hook's Bought/Sold events carry a trader's average fill,
+ * which is a different number and would draw a misleading chart.
+ */
+export function usePriceSeries(poolId?: `0x${string}`, quoteIsCurrency0 = true) {
+  const client = usePublicClient();
+  return useQuery({
+    queryKey: ["priceSeries", poolId, quoteIsCurrency0],
+    enabled: !!client && !!poolId && isDeployed,
+    refetchInterval: 10_000,
+    queryFn: async (): Promise<PricePoint[]> => {
+      const logs = await getLogsChunked(client as PublicClient, {
+        address: addr.poolManager,
+        event: swapEvent,
+        eventArgs: { id: poolId! },
+      });
+      return logs
+        .map((l) => {
+          const a = (l as unknown as {
+            args: { sqrtPriceX96: bigint; amount0: bigint; amount1: bigint };
+          }).args;
+          // amount0 is the quote side, signed from the pool's perspective.
+          const q = quoteIsCurrency0 ? a.amount0 : a.amount1;
+          return {
+            block: l.blockNumber!,
+            price: priceFromSqrtX96(a.sqrtPriceX96, quoteIsCurrency0),
+            volumeQuote: q < 0n ? -q : q,
+          };
+        })
+        .filter((p) => p.price > 0)
+        .sort((x, y) => Number(x.block - y.block));
+    },
+  });
+}
+
+// ------------------------------------------------------------ coin stats
+
+export type CoinStats = {
+  price: number;
+  /// Change across the whole recorded history, i.e. since launch.
+  changePct: number | null;
+  volumeQuote: bigint;
+  swaps: number;
+  holders: number;
+};
+
+const transferEvent = parseAbiItem(
+  "event Transfer(address indexed from, address indexed to, uint256 value)",
+);
+
+/**
+ * Holder count, computed from the coin's own Transfer events.
+ *
+ * Replaying transfers is the only way to get a true holder count without an
+ * indexer: there is no enumerable-holders view on an ERC-20. Addresses that
+ * cannot sell are excluded, because counting the pool itself as a holder would
+ * inflate every coin by one and make a brand new coin look like it has company.
+ */
+export function useCoinStats(coin?: Coin) {
+  const client = usePublicClient();
+  const series = usePriceSeries(coin?.poolId, coin ? quoteIsCurrency0(coin.poolKey) : true);
+
+  const holders = useQuery({
+    queryKey: ["holders", coin?.address],
+    enabled: !!client && !!coin && isDeployed,
+    refetchInterval: 20_000,
+    queryFn: async (): Promise<number> => {
+      const logs = await getLogsChunked(client as PublicClient, {
+        address: coin!.address,
+        event: transferEvent,
+      });
+      const bal = new Map<string, bigint>();
+      for (const l of logs) {
+        const a = (l as unknown as { args: { from: Address; to: Address; value: bigint } }).args;
+        const from = a.from.toLowerCase();
+        const to = a.to.toLowerCase();
+        if (from !== ZERO) bal.set(from, (bal.get(from) ?? 0n) - a.value);
+        bal.set(to, (bal.get(to) ?? 0n) + a.value);
+      }
+      const excluded = new Set(
+        [ZERO, addr.poolManager, addr.launcher, coin!.address].map((x) => x.toLowerCase()),
+      );
+      let n = 0;
+      for (const [who, v] of bal) if (v > 0n && !excluded.has(who)) n += 1;
+      return n;
+    },
+  });
+
+  const stats: CoinStats | undefined = series.data && {
+    price: series.data.at(-1)?.price ?? 0,
+    changePct:
+      series.data.length > 1
+        ? changePct(series.data[0].price, series.data.at(-1)!.price)
+        : null,
+    volumeQuote: series.data.reduce((s, p) => s + p.volumeQuote, 0n),
+    swaps: series.data.length,
+    holders: holders.data ?? 0,
+  };
+
+  return {
+    stats,
+    series: series.data,
+    isLoading: series.isLoading || holders.isLoading,
+    error: series.error ?? holders.error,
+  };
+}
+
+// --------------------------------------------------------- trader profile
+
+export type TraderProfile = {
+  trader: Address;
+  ownPnl: bigint;
+  followersPnl: bigint;
+  followers: Address[];
+  copying: Address[];
+  wins: number;
+  trades: number;
+  feesPaid: bigint;
+  honesty: number | null;
+  isDumper: boolean;
+  history: Trade[];
+};
+
+/// One trader's full record, derived from the same events as the leaderboard so
+/// the two can never disagree.
+export function useTrader(who?: Address) {
+  const all = useTrades();
+
+  const profile: TraderProfile | undefined =
+    all.data && who
+      ? (() => {
+          const lower = who.toLowerCase();
+          const chrono = [...all.data].sort((a, b) => Number(a.block - b.block));
+
+          const copying = new Map<string, Address>();
+          const followers = new Set<Address>();
+          const copyingSet = new Set<Address>();
+          let ownPnl = 0n;
+          let followersPnl = 0n;
+          let feesPaid = 0n;
+          let wins = 0;
+          let trades = 0;
+
+          for (const t of chrono) {
+            const key = `${t.trader}:${t.poolId}`;
+            if (t.kind === "buy") {
+              if (t.followed) {
+                copying.set(key, t.followed);
+                if (t.followed.toLowerCase() === lower) followers.add(t.trader);
+                if (t.trader.toLowerCase() === lower) copyingSet.add(t.followed);
+              }
+              continue;
+            }
+            const pnl = t.pnl ?? 0n;
+            if (t.trader.toLowerCase() === lower) {
+              ownPnl += pnl;
+              feesPaid += t.fee ?? 0n;
+              trades += 1;
+              if (pnl > 0n) wins += 1;
+            }
+            const leader = copying.get(key);
+            if (leader && leader.toLowerCase() === lower && t.trader.toLowerCase() !== lower) {
+              followersPnl += pnl;
+            }
+          }
+
+          return {
+            trader: who,
+            ownPnl,
+            followersPnl,
+            followers: [...followers],
+            copying: [...copyingSet],
+            wins,
+            trades,
+            feesPaid,
+            honesty: ownPnl === 0n ? null : Number(followersPnl) / Number(ownPnl),
+            isDumper: followers.size > 0 && followersPnl < 0n && ownPnl > 0n,
+            history: all.data
+              .filter((t) => t.trader.toLowerCase() === lower)
+              .sort((a, b) => Number(b.block - a.block)),
+          };
+        })()
+      : undefined;
+
+  return { ...all, profile };
 }

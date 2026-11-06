@@ -3,12 +3,27 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useAccount, usePublicClient, useWalletClient } from "wagmi";
+import Link from "next/link";
 import { Page } from "@/components/Shell";
-import { Card, Button, Row, Loading, Empty, ErrorBox, Badge, TxState } from "@/components/ui";
+import {
+  AddressLink,
+  Badge,
+  Button,
+  Card,
+  Empty,
+  ErrorBox,
+  Row,
+  SkeletonRows,
+  TxLink,
+} from "@/components/ui";
+import { ConnectCta, FaucetLink } from "@/components/NetworkGate";
+import { useToast } from "@/components/Toast";
 import { useCoins, useAccountState, useTrades } from "@/lib/data";
-import { addr, deployed } from "@/lib/chain";
+import { addr, isDeployed } from "@/lib/chain";
 import { winCutHookAbi } from "@/config/abis";
-import { usd, coins as fmtCoins, short, handle } from "@/lib/format";
+import { inviteLink } from "@/lib/referral";
+import { reason } from "@/components/TradePanel";
+import { usd, coins as fmtCoins } from "@/lib/format";
 
 export default function MePage() {
   const { address, isConnected } = useAccount();
@@ -19,9 +34,11 @@ export default function MePage() {
   const coinsQ = useCoins();
   const trades = useTrades();
 
+  const toast = useToast();
   const [status, setStatus] = useState<"idle" | "pending" | "confirmed" | "failed">("idle");
   const [hash, setHash] = useState<`0x${string}` | undefined>();
   const [error, setError] = useState<string | undefined>();
+  const [copied, setCopied] = useState(false);
 
   // Realised PnL and fees paid, from this wallet's own Sold events.
   const stats = useMemo(() => {
@@ -43,38 +60,70 @@ export default function MePage() {
 
   async function claim() {
     if (!wallet || !client) return;
-    setStatus("pending"); setError(undefined);
+    setStatus("pending");
+    setError(undefined);
+    const id = toast.push({ kind: "pending", title: "Claiming earnings", detail: "Approve in your wallet" });
     try {
       const h = await wallet.writeContract({
-        address: addr.hook, abi: winCutHookAbi, functionName: "claim",
+        address: addr.hook,
+        abi: winCutHookAbi,
+        functionName: "claim",
+        chain: wallet.chain,
+        account: wallet.account,
       });
       setHash(h);
+      toast.update(id, { detail: "Waiting for the block", hash: h });
       const r = await client.waitForTransactionReceipt({ hash: h });
       if (r.status !== "success") throw new Error("claim reverted");
       setStatus("confirmed");
+      toast.update(id, { kind: "confirmed", title: "Earnings claimed", detail: undefined, hash: h });
       acct.refetch();
     } catch (e) {
       setStatus("failed");
-      const m = e as { shortMessage?: string; message?: string };
-      setError(m.shortMessage ?? m.message ?? String(e));
+      const msg = reason(e);
+      setError(msg);
+      toast.update(id, { kind: "failed", title: "Claim failed", detail: msg });
+    }
+  }
+
+  async function shareInvite() {
+    try {
+      await navigator.clipboard.writeText(inviteLink(address));
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2_000);
+    } catch {
+      // Clipboard access can be denied; the link is printed below regardless.
+      setCopied(false);
     }
   }
 
   if (!isConnected)
     return (
       <Page>
-        <Empty title="Connect your wallet" hint="Your positions, loss credit and earnings live here." />
+        <Empty
+          title="Connect your wallet"
+          hint="Your positions, loss credit and earnings live here. Nothing is stored off chain — this screen is just a view of the hook."
+        />
+        <ConnectCta />
       </Page>
     );
 
   return (
     <Page>
-      <div>
-        <h1 className="text-2xl uppercase">{handle(address)}</h1>
-        <p className="font-mono text-[10px] text-muted">{short(address)}</p>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h1 className="text-2xl uppercase leading-none">You</h1>
+          <p className="mt-1 break-all font-mono text-xs">{address}</p>
+          <p className="mt-1 flex gap-3">
+            <AddressLink address={address} label="arcscan ↗" className="text-[10px]" />
+            <Link href={`/trader/${address}`} className="font-mono text-[10px] underline">
+              public profile ↗
+            </Link>
+          </p>
+        </div>
       </div>
 
-      {acct.isLoading && <Loading label="Reading your state from the hook" />}
+      {acct.isLoading && <SkeletonRows rows={2} height="h-20" />}
       {acct.error && <ErrorBox title="Cannot read your account" detail={String(acct.error)} />}
 
       {/* ---- realised performance ---- */}
@@ -138,15 +187,40 @@ export default function MePage() {
       </Card>
 
       {error && <ErrorBox title="Claim failed" detail={error} />}
-      <TxState status={status} hash={hash} explorer={deployed.explorer} />
+      {status === "confirmed" && hash && (
+        <div className="nb-sm bg-white p-2 text-center">
+          <TxLink hash={hash} />
+        </div>
+      )}
+
+      {/* ---- invite ---- */}
+      <Card className="p-4">
+        <p className="font-display text-xs uppercase">Your invite link</p>
+        <p className="mt-1 text-[11px] leading-snug text-muted">
+          You earn 20% of the fee whenever someone you invited exits at a profit. If they lose,
+          you earn nothing — there is no fee to split.
+        </p>
+        <Button tone="brand" className="mt-3 w-full" onClick={shareInvite}>
+          {copied ? "Link copied" : "Copy invite link"}
+        </Button>
+        <p className="mt-2 break-all font-mono text-[10px] text-muted">{inviteLink(address)}</p>
+      </Card>
 
       {/* ---- positions ---- */}
       <h2 className="mt-2 text-lg uppercase">Positions</h2>
-      {coinsQ.isLoading && <Loading label="Loading positions" />}
+      {coinsQ.isLoading && <SkeletonRows rows={2} height="h-20" />}
       {coinsQ.data?.map((c) => (
         <PositionCard key={c.address} coin={c} account={address!} />
       ))}
-      {coinsQ.data?.length === 0 && <Empty title="No coins launched yet" />}
+      {isDeployed && coinsQ.data?.length === 0 && (
+        <Empty
+          title="No coins yet. Be the first."
+          hint="Launch one and your position shows up here."
+        />
+      )}
+      <div className="flex justify-center">
+        <FaucetLink />
+      </div>
     </Page>
   );
 }

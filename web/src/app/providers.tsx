@@ -4,6 +4,7 @@ import { WagmiProvider } from "wagmi";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useState, type ReactNode } from "react";
 import { wagmiConfig } from "@/lib/chain";
+import { ToastProvider } from "@/components/Toast";
 
 export function Providers({ children }: { children: ReactNode }) {
   const [queryClient] = useState(
@@ -17,7 +18,9 @@ export function Providers({ children }: { children: ReactNode }) {
 
   return (
     <WagmiProvider config={wagmiConfig}>
-      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+      <QueryClientProvider client={queryClient}>
+        <ToastProvider>{children}</ToastProvider>
+      </QueryClientProvider>
     </WagmiProvider>
   );
 }
