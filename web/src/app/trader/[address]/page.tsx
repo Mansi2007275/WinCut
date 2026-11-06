@@ -105,7 +105,7 @@ function TraderScreen() {
           <h1 className="text-xl uppercase leading-none">Trader</h1>
           <p className="mt-1 break-all font-mono text-xs">{target}</p>
           <p className="mt-1">
-            <AddressLink address={target} label="open in arcscan ↗" className="text-[10px]" />
+            <AddressLink address={target} label="open in explorer ↗" className="text-[10px]" />
           </p>
         </div>
         <div className="flex shrink-0 flex-col items-end gap-1">

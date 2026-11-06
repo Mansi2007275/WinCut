@@ -115,7 +115,7 @@ export default function MePage() {
           <h1 className="text-2xl uppercase leading-none">You</h1>
           <p className="mt-1 break-all font-mono text-xs">{address}</p>
           <p className="mt-1 flex gap-3">
-            <AddressLink address={address} label="arcscan ↗" className="text-[10px]" />
+            <AddressLink address={address} label="explorer ↗" className="text-[10px]" />
             <Link href={`/trader/${address}`} className="font-mono text-[10px] underline">
               public profile ↗
             </Link>

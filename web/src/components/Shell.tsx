@@ -134,7 +134,7 @@ export function Page({
       <p className="mx-auto max-w-md px-4 pb-4 text-center font-mono text-[10px] leading-snug text-muted">
         {deployed.chainName} · chain {deployed.chainId} ·{" "}
         <a href={deployed.explorer} target="_blank" rel="noreferrer" className="underline">
-          arcscan
+          explorer
         </a>
       </p>
     </>

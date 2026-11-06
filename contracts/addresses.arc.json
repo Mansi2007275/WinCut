@@ -66,7 +66,7 @@
 
   "testnet": {
     "chainId": 5042002,
-    "rpc": "https://rpc.testnet.arc.io",
+    "rpc": "https://rpc.testnet.arc.network",
     "verifiedAt": "2026-11-06",
     "note": "CONFIRMED: Uniswap v4 is deployed on Arc testnet at the SAME addresses as mainnet. Verified by eth_getCode plus a live msgSender() call.",
     "contracts": {

@@ -11,7 +11,7 @@
 # Reads from .env (gitignored, never printed):
 #   DEPLOYER_PRIVATE_KEY   throwaway key that pays deploy gas
 #   DEPLOYER_ADDRESS       its address
-#   ARC_TESTNET_RPC        https://rpc.testnet.arc.io
+#   ARC_TESTNET_RPC        https://rpc.testnet.arc.network
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -22,7 +22,7 @@ set -a; . ./.env; set +a
 
 RPC="${ARC_TESTNET_RPC:?ARC_TESTNET_RPC missing from .env}"
 CHAIN_ID=5042002
-EXPLORER="https://testnet.arcscan.app"
+EXPLORER="https://explorer.testnet.arc.io"
 
 # Arc testnet carries the same v4 deployment as mainnet, verified by eth_getCode.
 POOL_MANAGER=0x8366a39CC670B4001A1121B8F6A443A643e40951

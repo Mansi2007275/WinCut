@@ -116,7 +116,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
                       rel="noreferrer"
                       className="mt-1 inline-block font-mono text-[10px] underline"
                     >
-                      view on arcscan ↗
+                      view on explorer ↗
                     </a>
                   )}
                 </div>

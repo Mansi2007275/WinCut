@@ -101,7 +101,7 @@ function RowCard({ row, rank, tab }: { row: LeaderRow; rank: number; tab: BoardT
             )}
           </div>
           <p className={`mt-0.5 ${highlight ? "text-white/80" : "text-muted"}`}>
-            <AddressLink address={row.trader} label="arcscan ↗" className="text-[10px]" />
+            <AddressLink address={row.trader} label="explorer ↗" className="text-[10px]" />
           </p>
         </div>
 

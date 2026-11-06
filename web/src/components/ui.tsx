@@ -245,7 +245,7 @@ export function TxState({
  *
  * There are no display names in WinCut. An invented handle makes a stranger's
  * wallet look like an account the app knows something about, which is a claim
- * the app cannot back. A short address that opens arcscan is the honest form,
+ * the app cannot back. A short address that opens the explorer is the honest form,
  * and it is also the form a judge can verify mid-demo.
  */
 export function AddressLink({
@@ -283,7 +283,7 @@ export function TxLink({ hash, children }: { hash?: string; children?: ReactNode
       rel="noreferrer"
       className="font-mono text-[10px] underline decoration-ink/30 hover:decoration-ink"
     >
-      {children ?? "view on arcscan ↗"}
+      {children ?? "view on explorer ↗"}
     </a>
   );
 }

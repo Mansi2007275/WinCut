@@ -336,7 +336,9 @@ async function main() {
   step("done");
   console.log(`   coin         ${addrLink(coin)}`);
   console.log(`   B loss credit ${usd(credit)}`);
-  console.log(`   open the app  http://localhost:4000/coin/${coin}`);
+  // APP_URL lets this point at the deployed app; it falls back to a dev server.
+  const appUrl = process.env.APP_URL ?? "http://127.0.0.1:4000";
+  console.log(`   open the app  ${appUrl}/coin/${coin}`);
 }
 
 /// The quoter ABI, inlined so this script does not import a browser module.
