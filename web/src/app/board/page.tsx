@@ -54,7 +54,7 @@ export default function BoardPage() {
       {sorted && sorted.length === 0 && (
         <Empty
           title="No trades yet"
-          hint="Run ./scripts/dev.sh to generate real trading history on an Arc fork."
+          hint="No trades yet. Be the first."
         />
       )}
 

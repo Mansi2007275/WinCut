@@ -16,7 +16,7 @@ import deployed from "@/config/deployed.json";
  */
 const CHUNK = 5_000n;
 
-/// Set by scripts/dev.sh at deploy time. Falls back to a recent window.
+/// Set by scripts/test-only/dev.sh at deploy time. Falls back to a recent window.
 const deployedAtBlock = (() => {
   const v = (deployed as { deployedAtBlock?: number | string }).deployedAtBlock;
   if (v === undefined || v === null || v === "") return undefined;

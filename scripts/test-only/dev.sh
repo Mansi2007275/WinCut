@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # WinCut local development stack.
 #
-#   ./scripts/dev.sh
+#   ./scripts/test-only/dev.sh
 #
 # Starts an Anvil fork of Arc mainnet, deploys WinCutHook + WinCutLauncher,
 # seeds real trading history, and writes the addresses the frontend reads.
@@ -12,7 +12,7 @@
 # Universal Router.
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
 ARC_RPC="${ARC_RPC:-https://rpc.mainnet.arc.io}"
@@ -94,7 +94,7 @@ echo "[dev]      launcher = $LAUNCHER"
 echo "[dev]      quoter   = $QUOTER"
 
 echo "[dev] 3b   funding undelegated demo wallets via anvil_setBalance"
-# Must match TRADER_SALT in script/SeedTrades.s.sol:
+# Must match TRADER_SALT in script/test-only/SeedTrades.s.sol:
 #   keccak256(abi.encodePacked(bytes32("wincut.seed.v3"), uint256(i)))
 # These wallets are NOT anvil's defaults, because every well-known test
 # address carries an EIP-7702 sweeper delegation on Arc mainnet.
@@ -125,7 +125,7 @@ fi
 echo "[dev]      funded 14 clean wallets"
 
 echo "[dev] 4/5  seeding real trades through the real Universal Router"
-HOOK="$HOOK" LAUNCHER="$LAUNCHER" forge script script/SeedTrades.s.sol \
+HOOK="$HOOK" LAUNCHER="$LAUNCHER" forge script script/test-only/SeedTrades.s.sol \
   --rpc-url "$LOCAL_RPC" --broadcast --skip-simulation 2>&1 \
   | grep -E "launched|claimable|honest|dumper|referrer|treasury|credit|coins launched|POSITIVE" || true
 

@@ -202,7 +202,7 @@ function Trade() {
       <Page>
         <Empty
           title="No coins yet"
-          hint="Run ./scripts/dev.sh to deploy and seed real trades on an Arc fork."
+          hint="No coins yet. Launch the first one."
         />
       </Page>
     );

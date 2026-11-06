@@ -13,7 +13,7 @@ Budget: ~6 minutes for setup, 3 minutes for the demo.
 
 ```bash
 cd /c/Users/yadav/Famdroid
-KEEP_ALIVE=1 ./scripts/dev.sh
+KEEP_ALIVE=1 ./scripts/test-only/dev.sh
 ```
 
 This forks Arc mainnet, deploys the hook at a mined address, funds clean
@@ -145,7 +145,7 @@ Arc's public RPC can rate-limit. The fork needs it on startup.
 
 - **Fallback:** keep a terminal with a *working* `dev.sh` session running from
   the start of the event and never kill it. That is why `KEEP_ALIVE=1` exists.
-- If it is already dead: `./scripts/dev.sh` again takes ~90s. If the RPC itself
+- If it is already dead: `./scripts/test-only/dev.sh` again takes ~90s. If the RPC itself
   is down, go to the recorded video.
 
 ### If a transaction reverts on stage

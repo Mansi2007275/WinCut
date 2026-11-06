@@ -1,10 +1,10 @@
 /**
  * WinCut live activity bot.
  *
- *   npx tsx scripts/activity-bot.ts                 # run until Ctrl-C
- *   npx tsx scripts/activity-bot.ts --minutes 10    # run for 10 minutes
- *   npx tsx scripts/activity-bot.ts --interval 4    # ~4s between actions
- *   npx tsx scripts/activity-bot.ts --warmup        # one fast pass, then stop
+ *   npx tsx scripts/test-only/activity-bot.ts                 # run until Ctrl-C
+ *   npx tsx scripts/test-only/activity-bot.ts --minutes 10    # run for 10 minutes
+ *   npx tsx scripts/test-only/activity-bot.ts --interval 4    # ~4s between actions
+ *   npx tsx scripts/test-only/activity-bot.ts --warmup        # one fast pass, then stop
  *
  * Purpose: make the demo LIVE. Every trade is a real swap through Arc's real
  * Universal Router, so the leaderboard moves, the feed fills and honesty scores
@@ -31,9 +31,9 @@ import {
   keccak256, encodePacked, type Address, type PublicClient, type WalletClient, type Account,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import deployed from "../src/config/deployed.json";
-import { winCutHookAbi, winCutLauncherAbi, winCutQuoterAbi, universalRouterAbi, erc20Abi, permit2Abi } from "../src/config/abis";
-import { buildSwap, encodeAttribution, deadline, MAX_UINT160 } from "../src/lib/swap";
+import deployed from "../../src/config/deployed.json";
+import { winCutHookAbi, winCutLauncherAbi, winCutQuoterAbi, universalRouterAbi, erc20Abi, permit2Abi } from "../../src/config/abis";
+import { buildSwap, encodeAttribution, deadline, MAX_UINT160 } from "../../src/lib/swap";
 
 // ----------------------------------------------------------------- config
 
@@ -132,7 +132,7 @@ async function setup() {
 
   const count = await pub.readContract({ address: A.launcher, abi: winCutLauncherAbi, functionName: "coinCount" });
   if (count === 0n) {
-    console.error("no coins launched. Run ./scripts/dev.sh first.");
+    console.error("no coins launched. Run ./scripts/test-only/dev.sh first.");
     process.exit(1);
   }
 

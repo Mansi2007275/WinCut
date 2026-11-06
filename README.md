@@ -262,7 +262,7 @@ Answers the two questions the architecture rests on: does the live router expose
 ### One command for everything else
 
 ```bash
-KEEP_ALIVE=1 ./scripts/dev.sh
+KEEP_ALIVE=1 ./scripts/test-only/dev.sh
 ```
 
 Forks Arc mainnet, deploys at a mined address, funds clean undelegated wallets, seeds real trades through the real Universal Router, and writes `web/src/config/deployed.json`.

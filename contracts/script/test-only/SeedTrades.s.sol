@@ -89,13 +89,13 @@ contract SeedTrades is Script {
         console.log("referrer      :", referrer);
         console.log("");
 
-        // Funding is done by scripts/dev.sh via anvil_setBalance before this
+        // Funding is done by scripts/test-only/dev.sh via anvil_setBalance before this
         // runs. vm.deal is a simulation cheatcode and never touches the live
         // chain, and vm.broadcast cannot send value the script contract does
         // not hold, so neither works here.
         require(
             traders[0].balance >= 1_000_000e18,
-            "demo wallets unfunded: run via scripts/dev.sh, which anvil_setBalance's them"
+            "demo wallets unfunded: run via scripts/test-only/dev.sh, which anvil_setBalance's them"
         );
 
         _launch("Duke", "DUKE");

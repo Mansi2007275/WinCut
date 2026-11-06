@@ -97,7 +97,7 @@ async function main() {
   console.log("[1] read coins from the launcher");
   const count = await pub.readContract({ address: launcher, abi: winCutLauncherAbi, functionName: "coinCount" });
   check(count > 0n, "coinCount > 0", `count=${count}`);
-  if (count === 0n) throw new Error("no coins; run ./scripts/dev.sh");
+  if (count === 0n) throw new Error("no coins; run ./scripts/test-only/dev.sh");
 
   const coin = await pub.readContract({ address: launcher, abi: winCutLauncherAbi, functionName: "allCoins", args: [0n] });
   const poolKey = await pub.readContract({ address: launcher, abi: winCutLauncherAbi, functionName: "poolKeyFor", args: [coin] });

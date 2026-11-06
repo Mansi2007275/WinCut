@@ -141,7 +141,7 @@ async function main() {
 
   if (dumpers.length === 0 || honest.length === 0) {
     console.log("\nFAIL: the board needs at least one honest row AND one dumper row.");
-    console.log("Run: npx tsx scripts/activity-bot.ts --minutes 3 --interval 1");
+    console.log("Run: npx tsx scripts/test-only/activity-bot.ts --minutes 3 --interval 1");
     process.exit(1);
   }
   console.log("\nPASS: the Followers' profit board has a story to tell.");
