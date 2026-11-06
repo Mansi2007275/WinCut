@@ -6,6 +6,8 @@
 
 Built for ETHGlobal Mumbai 2026 · targeting **Uniswap Foundation**, **Arc (Circle)** and **World** partner prizes.
 
+[Pitch and demo script](docs/PITCH.md) · [Demo checklist](docs/DEMO_CHECKLIST.md) · [Uniswap feedback](FEEDBACK.md)
+
 ---
 
 ## What it does
@@ -27,7 +29,56 @@ Pool fees and gas still apply on every trade: those go to Uniswap LPs and to the
 
 ---
 
+## Verified Arc mainnet addresses
+
+Every address below was **bytecode-checked on chain** against `https://rpc.mainnet.arc.io`, not taken from a third party. Evidence and method in [`contracts/addresses.arc.json`](contracts/addresses.arc.json). Verified 2026-11-06 at block 29,830,463.
+
+| Contract | Address | Verification |
+|---|---|---|
+| PoolManager | `0x8366a39CC670B4001A1121B8F6A443A643e40951` | 24,009 bytes; `owner()` responds |
+| Universal Router | `0x4fcA4a51Ab4F23A7447b3284fBd7D73289A89Fb1` | 24,546 bytes; `execute()` + `msgSender()` (`0xd737d0c7`) present in bytecode, live call returns without reverting |
+| PositionManager | `0x6049c9a0e26405C0985f9E3685C87d0aE917f82B` | 23,877 bytes |
+| Permit2 | `0x000000000022D473030F116dDEE9F6B43aC78BA3` | 9,152 bytes; canonical |
+
+### The quote currency is NATIVE USDC
+
+`QUOTE = address(0)`, 18 decimals. **Decided from evidence, not assumed:**
+
+- 129 of the `Initialize` events sampled across blocks 29,790,463–29,830,463 have `currency0 == address(0)`, so real Arc v4 pools pair against native USDC.
+- A sampled live pool: `currency0 = 0x0`, `fee = 2500`, `tickSpacing = 50`, no hook.
+- PoolManager held `2695092197412180258688951` native (18dp = $2,695,092) versus `2695297895145` via the ERC-20 `balanceOf` (6dp = $2,695,297) — a ratio of **1e12**.
+
+USDC on Arc exists as the native asset at 18 decimals **and** as an ERC-20 interface at `0x3600…0000` at 6 decimals. Same money, 1e12 apart. Mixing them silently corrupts every cost basis, so the hook pins exactly one in an immutable and rejects pools built on the other. Native is also strictly safer: the check becomes `isAddressZero()`, which cannot be spoofed.
+
+---
+
 ## Architecture
+
+```mermaid
+flowchart TD
+    T["trader"] -->|"exactInput swap<br/>hookData = (followed, referrer)"| UR["Universal Router<br/>0x4fcA…9Fb1"]
+    UR --> PM["v4 PoolManager<br/>0x8366…0951"]
+    PM -->|afterSwap| H
+
+    subgraph H["WinCutHook — frozen bitmap 0x2044"]
+        R["_resolveTrader<br/>IMsgSender.msgSender()"] --> B{buy or sell}
+        B -->|buy| REC["record amount + cost<br/>per (trader, pool)"]
+        B -->|sell| P["proceeds vs<br/>proportional basis"]
+        P -->|loss| C["bank loss credit<br/>fee = 0"]
+        P -->|profit| F["consume credit<br/>fee = 10% of remainder"]
+        F --> S["take() + split<br/>50 / 20 / 30"]
+        S --> CL["claimable ledger<br/>pull-based"]
+    end
+
+    L["WinCutLauncher"] -->|"beforeInitialize<br/>launcher only"| PM
+    L --> COIN["WinCutCoin<br/>fixed supply, no owner"]
+    Q["WinCutQuoter"] -.->|"simulate + revert<br/>reads no storage"| PM
+    Q -.->|quoteFee| H
+    UI["Next.js app"] -.->|"minOut from netOut"| Q
+```
+
+<details>
+<summary>ASCII version</summary>
 
 ```
                     ┌──────────────────────┐
@@ -56,6 +107,7 @@ Pool fees and gas still apply on every trade: those go to Uniswap LPs and to the
                     │   WinCutLauncher     │  deploys coin, opens pool,
                     └──────────────────────┘  locks seed liquidity forever
 ```
+</details>
 
 ### Contracts
 
@@ -64,16 +116,18 @@ Pool fees and gas still apply on every trade: those go to Uniswap LPs and to the
 | [`WinCutHook.sol`](contracts/src/WinCutHook.sol) | Cost-basis ledger, profit-only fee, loss credits, fee split, pull-based claims |
 | [`WinCutLauncher.sol`](contracts/src/WinCutLauncher.sol) | One-tx coin launch: deploy ERC-20, open the v4 pool, seed **permanently locked** liquidity |
 | [`WinCutCoin.sol`](contracts/src/WinCutCoin.sol) | Fixed supply, no mint, no owner, no transfer tax, nothing that can rug |
+| [`WinCutQuoter.sol`](contracts/src/periphery/WinCutQuoter.sol) | Gross + fee + net in one `eth_call`, reading no PoolManager storage |
+| [`UniversalRouterLib.sol`](contracts/src/periphery/UniversalRouterLib.sol) | Shared V4_SWAP encoder, mirrored by `web/src/lib/swap.ts` |
 
 ---
 
 ## The design decisions that matter
 
-Each of these is a deliberate choice with a reason, not an accident.
+Each is a deliberate choice with a reason. Links go to the exact lines.
 
 ### 1. Unidentified routers pay **zero**, not 10% of everything
 
-[`WinCutHook.sol` — `_resolveTrader`](contracts/src/WinCutHook.sol#L205)
+[`WinCutHook.sol:233` — `_resolveTrader`](contracts/src/WinCutHook.sol#L233)
 
 The naive design taxes any sell it cannot attribute. That would deter arbitrage, let the pool price drift above other venues (so *our own users* buy high), and get every launched coin flagged as a sell-tax token by sniffers and aggregators.
 
@@ -81,15 +135,15 @@ So an unknown router is charged nothing and recorded nothing. **The fee is opt-i
 
 ### 2. Untracked coins are fee-free
 
-[`WinCutHook.sol` — `_handleSell`](contracts/src/WinCutHook.sol#L254)
+[`WinCutHook.sol:270` — `_handleSell`](contracts/src/WinCutHook.sol#L270)
 
-The hook sees swaps, never ERC-20 transfers, and **never reads `balanceOf`**. Coins that arrive by airdrop or transfer carry no recorded basis and are never taxed.
+The hook sees swaps, never ERC-20 transfers, and **never reads `balanceOf`**. Coins arriving by airdrop or transfer carry no recorded basis and are never charged.
 
-Treating them as 100% profit would mean **anyone could inflate your tax bill by dusting you** — and memecoin wallets get dusted constantly. Test: `test_Airdrop_CannotInflateFeeOnRealPosition`.
+Treating them as 100% profit would mean **anyone could inflate your fee by dusting you** — and memecoin wallets get dusted constantly. Test: `test_Airdrop_CannotInflateFeeOnRealPosition`.
 
 ### 3. Loss credits are global, with no expiry
 
-[`WinCutHook.sol` — `_applyCredit`](contracts/src/WinCutHook.sol#L299)
+[`WinCutHook.sol:323` — `_applyCredit`](contracts/src/WinCutHook.sol#L323)
 
 Per-coin credits would still tax a DUKE win while a PEPE loss sat unused. Global credits make the headline claim true at the portfolio level.
 
@@ -97,78 +151,99 @@ Farming credits is strictly unprofitable: banking $X of credit requires genuinel
 
 ### 4. `quoteFee()` is the single source of truth
 
-[`WinCutHook.sol` — `quoteFee`](contracts/src/WinCutHook.sol#L348)
+[`WinCutHook.sol:372` — `quoteFee`](contracts/src/WinCutHook.sol#L372)
 
-The hook takes its fee from the swap **output**, and Universal Router checks `amountOutMinimum` on the post-hook amount. A frontend that derives `minOut` from the gross quote will make **every profitable sell revert**.
+The hook takes its fee from the swap **output**, and Universal Router checks `amountOutMinimum` against the post-hook amount. A frontend deriving `minOut` from the gross quote makes **every profitable sell revert**.
 
-So the fee formula lives in the contract and the frontend calls it:
+Measured on Arc:
 
-```
-grossOut = V4Quoter.quoteExactInputSingle(...)
-(fee, netOut) = hook.quoteFee(trader, poolId, sellAmount, grossOut)
-minOut = netOut * (10000 - slippageBps) / 10000
-```
+| | USDC |
+|---|---|
+| gross out | 38,485.13 |
+| hook fee | 3,648.51 |
+| minOut from `netOut` (correct) | 34,662.43 → **succeeds** |
+| minOut from gross (naive) | 38,292.71 → **exceeds achievable net, reverts** |
 
-**Never reimplement this formula in TypeScript.** Two copies drift, and the drift surfaces as a revert on stage.
+So the formula lives in the contract and the frontend calls it. **Never reimplement it in TypeScript.**
 
 ### 5. Permissions are frozen at `0x2044`
 
-`beforeInitialize | afterSwap | afterSwapReturnDelta`
+`beforeInitialize | afterSwap | afterSwapReturnDelta`, asserted in `test_HookAddress_CarriesFrozenPermissionBits` and `require()`d at deploy.
 
-`PoolKey` contains the hook address, so adding a flag later changes the address, which changes every PoolKey, which invalidates every pool ever created. The bitmap is fixed and asserted in `test_HookAddress_CarriesFrozenPermissionBits`.
-
-`beforeSwap` is deliberately **not** used: `afterSwap` sees both directions, so buys are recorded there too.
+`PoolKey` contains the hook address, so adding a flag later changes the address, which changes every PoolKey, which invalidates every pool ever created. `beforeSwap` is deliberately **not** used: `afterSwap` sees both directions, so buys are recorded there too.
 
 ### 6. Claims are pull-based
 
-[`WinCutHook.sol` — `claim`](contracts/src/WinCutHook.sol#L334)
+[`WinCutHook.sol:358` — `claim`](contracts/src/WinCutHook.sol#L358)
 
 USDC can blocklist addresses. If fees were pushed on every sell, one blocklisted recipient would make **other people's** trades revert. Earnings accrue and are pulled, CEI-ordered.
 
-### 7. One pinned QUOTE currency
+### 7. Only the launcher may open pools
 
-On Arc, USDC is the **native** asset (18 decimals) *and* an ERC-20 interface at `0x3600…0000` (6 decimals). Same money, `1e12` apart. Mixing them silently corrupts every cost basis.
+[`WinCutHook.sol:182` — `_beforeInitialize`](contracts/src/WinCutHook.sol#L182)
 
-`beforeInitialize` rejects any pool that does not contain the pinned QUOTE, and only the launcher may open pools — so nobody can point a fake-token pool at a hook that custodies funds.
+Nobody can point a fake-token pool at a hook that custodies funds, and one side must be the pinned QUOTE.
 
 ---
 
 ## Tests
 
 ```bash
-cd contracts && forge test
+cd contracts && forge test                                    # 19 local
+ARC_RPC=https://rpc.mainnet.arc.io forge test                 # 31 incl. fork
 ```
 
-**19 passing, including 512 fuzz runs**, against a real `PoolManager` with a mined hook address and a router that implements `IMsgSender` exactly as Universal Router does.
+**31 passing, including 512 fuzz runs**, against a real `PoolManager` with a mined hook address.
+
+### Local suite (19)
 
 ```
 WinCutMoneyRules
-  ✓ test_Profit_ChargesTenPercent_AndSplits          10% of gain, split 50/20/30
-  ✓ test_Loss_ChargesNothing_AndBanksCredit          fee 0, loss banked exactly
-  ✓ test_LossCredit_OffsetsFutureGain                credit consumed before any fee
-  ✓ test_MultipleBuys_WeightedAverageBasis           proportional basis on partial exits
-  ✓ test_UnknownRouter_NoFeeNoRecord                 untrusted router charged nothing
-  ✓ test_AirdroppedCoins_AreFeeFree                  untracked coins never taxed
-  ✓ test_Airdrop_CannotInflateFeeOnRealPosition       dusting cannot raise a fee
+  ✓ Profit_ChargesTenPercent_AndSplits        10% of gain, split 50/20/30
+  ✓ Loss_ChargesNothing_AndBanksCredit        fee 0, loss banked exactly
+  ✓ LossCredit_OffsetsFutureGain              credit consumed before any fee
+  ✓ MultipleBuys_WeightedAverageBasis         proportional basis on partial exits
+  ✓ UnknownRouter_NoFeeNoRecord               untrusted router charged nothing
+  ✓ AirdroppedCoins_AreFeeFree                untracked coins never taxed
+  ✓ Airdrop_CannotInflateFeeOnRealPosition    dusting cannot raise a fee
 
-WinCutMechanics
-  ✓ test_SelfReferral_AndSelfFollow_Ignored          hookData self-dealing guarded
-  ✓ test_Referrer_LockedOnFirstBuy                   referrer cannot be reassigned
-  ✓ test_NoCopiedTrader_ShareGoesToCreator           unclaimed share → coin creator
-  ✓ test_Claim_PaysOut_AndCannotDoubleClaim          pull payout, no double spend
-  ✓ test_Pause_BlocksSwaps                           emergency stop
-  ✓ test_MaxTradeSize_Enforced                       per-trade cap
-  ✓ test_OnlyLauncher_CanInitializePools             no rogue pools on this hook
-  ✓ test_OnlyLauncher_CanRegisterCoins               access control
-  ✓ test_HookAddress_CarriesFrozenPermissionBits     bitmap is 0x2044
-  ✓ test_SeedLiquidity_IsLocked                      launcher has no removal path
+WinCutMechanics (10)   attribution guards, referrer locking, creator fallback,
+                       claim + double-claim, pause, trade cap, rogue pools,
+                       frozen bitmap, locked seed liquidity
 
 WinCutFuzz
-  ✓ testFuzz_FeeNeverExceedsTenPercentOfGain   (256 runs)  principal never touched
-  ✓ testFuzz_NeverChargesOnALoss               (256 runs)  sale ≤ basis is always free
+  ✓ FeeNeverExceedsTenPercentOfGain  (256 runs)  principal never touched
+  ✓ NeverChargesOnALoss              (256 runs)  sale ≤ basis is always free
+```
+
+### Fork suites against real Arc v4 (12)
+
+```
+WinCutForkTest
+  ✓ RealRouter_ExposesMsgSender       the live router's msgSender() is callable
+  ✓ PoolLivesOnRealPoolManager        our pool opens on the real PoolManager
+  ✓ NativeQuote_TakeAndClaim          hook accepts native value
+  ✓ RejectsRoguePools                 wrong caller AND wrong quote currency
+  ✓ FrozenPermissionBits              0x2044 survives deployment
+  ✓ UsdcDecimalTrap_IsReal            native/erc20 ratio measured at exactly 1e12
+
+WinCutRouterForkTest — real V4_SWAP through Arc's deployed Universal Router
+  ✓ RealRouter_AttributesTheTrader    position recorded for the TRADER, 0 for the router
+  ✓ Profit_FeeAndSplit                gain 7765.678 → fee 776.567 (10.000%), 50/20/30
+  ✓ Loss_NoFee_BanksCredit            fee 0, credit 2.408394559130491083 exactly
+  ✓ QuoteFeeDerivedMinOut_DoesNotRevert  proves the slippage trap numerically
+  ✓ Claim_PaysRealNativeUsdc          388.283918696510675795 real native USDC
 ```
 
 The delta sign convention is verified against `v4-core`'s `Hooks.afterSwap`, which applies `swapDelta = swapDelta - hookDelta` — so a positive returned `int128` takes from the user's output, and `take()` inside `afterSwap` nets the hook's own delta to zero within the same unlock.
+
+### Frontend path
+
+```bash
+cd web && npx tsx scripts/verify-flow.ts
+```
+
+Exercises the real UI encoder against the real router. All checks pass: buy attributed with basis exactly $2,000, sell gross $38,485.13 → fee $3,648.51 → net $34,836.6179, trader actually received $34,836.6177 (2 wei of rounding), split 50/20/30 confirmed.
 
 ---
 
@@ -178,32 +253,27 @@ The delta sign convention is verified against `v4-core`'s `Hooks.afterSwap`, whi
 
 ```bash
 cd contracts
-UNIVERSAL_ROUTER=0x... forge script script/Phase0.s.sol --fork-url $ARC_RPC -vv
+UNIVERSAL_ROUTER=0x4fcA4a51Ab4F23A7447b3284fBd7D73289A89Fb1 \
+  forge script script/Phase0.s.sol --fork-url https://rpc.mainnet.arc.io -vv
 ```
 
-Answers the two questions the architecture rests on:
-1. Does the deployed Universal Router expose `msgSender()`? If not, attribution needs a different design.
-2. Is the PoolManager where you think, and is USDC native or ERC-20? This decides `QUOTE` and your decimals.
+Answers the two questions the architecture rests on: does the live router expose `msgSender()`, and is USDC native or ERC-20. Expect `>>> OK` on both.
 
-**Expected output on success:** `>>> OK: v4 PoolManager is live on this chain.` and `>>> OK: the function EXISTS and is publicly callable.`
-
-### Deploy
+### One command for everything else
 
 ```bash
-anvil --fork-url $ARC_RPC          # develop against a mainnet fork, not testnet
-forge script script/Deploy.s.sol --rpc-url http://localhost:8545 --broadcast
+KEEP_ALIVE=1 ./scripts/dev.sh
 ```
 
-### Seed real trading history
+Forks Arc mainnet, deploys at a mined address, funds clean undelegated wallets, seeds real trades through the real Universal Router, and writes `web/src/config/deployed.json`.
 
 ```bash
-HOOK=0x... LAUNCHER=0x... ROUTER=0x... \
-  forge script script/SeedTrades.s.sol --rpc-url http://localhost:8545 --broadcast
+cd web && npm run dev
 ```
 
-Produces genuine on-chain trades across three coins, including one deliberate **dumper** whose own PnL is positive while his followers lose — the row that turns red on the second leaderboard.
+> **Why fork mainnet instead of using Arc testnet?** The testnet RPC is live (chain 5042002) but has **no confirmed v4 deployment**. A mainnet fork is the only way to work against the real PoolManager and the real Universal Router.
 
-This exists because "no seeded data" plus a fresh deployment means an empty leaderboard, which is the one thing that makes a working demo look broken. Every row here is a real swap through the hook.
+> **EIP-7702 warning.** Every well-known test address carries a delegation on Arc mainnet (`0xef0100…` → a sweeper that forwards any native USDC it receives). A fork inherits it, so anvil's default accounts must never hold demo funds. `dev.sh` derives project-specific undelegated wallets and asserts `code.length == 0` before funding them. **Never fund an anvil default address on Arc mainnet — it will be swept instantly.**
 
 ---
 
@@ -211,17 +281,19 @@ This exists because "no seeded data" plus a fresh deployment means an empty lead
 
 Stated plainly, because they are real.
 
-- **The fee is avoidable.** Anyone can create a hookless pool for the same coin, or route around the trusted router, and pay nothing. This is by design (see decision 1), but it means revenue depends on people choosing to stay in the app. What WinCut sells is the signal and the honest leaderboard, not a tax.
+- **The fee is avoidable.** Anyone can create a hookless pool for the same coin, or route around the trusted router, and pay nothing. This is by design (decision 1), but it means revenue depends on people choosing to stay in the app. What WinCut sells is the signal and the honest leaderboard, not a tax.
 - **Win-then-lose is asymmetric.** Loss credits fix `−$1000 then +$1000` (fee $0) but not `+$1000 then −$1000` (fee $100 on net-zero PnL). A high-water mark is mathematically identical and does not help. The real fix is escrowing fees for N days so a later loss refunds from pending — see roadmap.
 - **Adverse selection.** A 10% profit fee is free for losing traders and expensive for winning ones, so the model systematically sheds the cohort that generates its revenue.
-- **World ID is verified off-chain**, so the leaderboard's Sybil resistance rests on our verifier. Money is unaffected: attribution gaming is self-defeating, since a sock puppet crediting its owner returns 25% of a fee the puppet itself had to pay.
-- **Native-QUOTE paths are coded but the suite exercises the ERC-20 path.** Pin `QUOTE` from Phase 0 before deploying.
+- **No indexer yet.** The leaderboard is built from hook events via `viem` `getLogs` over a bounded block window. Fine for a demo, not for scale.
+- **World ID is not integrated.** The leaderboard shows all traders. Money is unaffected: attribution gaming is self-defeating, since a sock puppet crediting its owner returns 25% of a fee the puppet itself had to pay.
+- **Economics unproven.** The replay against real Arc swap history, which is the experiment that decides whether 10%-of-profit out-earns 0.5%-of-volume, has not been run.
 
 ## Roadmap
 
-1. **Escrow window** — fees pending for N days, refunded from pending on a later loss, which closes the win-then-lose gap. Constructor parameter so it can be 60s for a demo and 7 days in production.
+1. **Escrow window** — fees pending for N days, refunded from pending on a later loss, closing the win-then-lose gap. Constructor parameter, short for a demo and 7 days in production.
 2. **Wrapper contract** — apply the same rule to existing Arc pools, inside the app only, bypassable by design.
-3. **Charge for the signal, not the swap** — restrict the success fee to copy-trades, where it is payment for a service rather than a toll on a swap. Winners then cannot route around it without giving up what they are paying for.
+3. **Charge for the signal, not the swap** — restrict the success fee to copy-trades, where it is payment for a service rather than a toll. Winners then cannot route around it without giving up what they are paying for.
+4. Real indexer (Envio), World ID gating, launch screen and social feed.
 
 ---
 
@@ -229,11 +301,14 @@ Stated plainly, because they are real.
 
 | Component | State |
 |---|---|
-| `WinCutHook` | ✅ complete, 19 tests passing |
-| `WinCutLauncher` + `WinCutCoin` | ✅ complete, liquidity locked |
-| Phase 0 / Deploy / Seed scripts | ✅ complete |
+| `WinCutHook` | ✅ complete, frozen bitmap `0x2044` |
+| `WinCutLauncher` + `WinCutCoin` | ✅ complete, seed liquidity locked |
+| `WinCutQuoter` + `UniversalRouterLib` | ✅ complete, storage-free quoting |
+| Tests | ✅ 31 passing, 12 against real Arc v4 |
+| Phase 0 / Deploy / Seed / `dev.sh` | ✅ complete, one command |
+| Frontend — Trade, Result, Board, Me | ✅ builds clean, flow verified end to end |
+| Browser visual pass | ⚠️ renders (HTTP 200, no runtime errors) but not visually confirmed in this environment |
 | Indexer (Envio) | ⬜ not started |
-| Frontend (Next.js) | ⬜ not started |
 | World ID | ⬜ not started |
 
 Licence: MIT.
