@@ -399,40 +399,77 @@ async function blockTimes(client: PublicClient, blocks: bigint[]): Promise<Map<s
 export function usePriceSeries(poolId?: `0x${string}`, quoteIsCurrency0 = true) {
   const client = usePublicClient();
   return useQuery({
-    queryKey: ["priceSeries", poolId, quoteIsCurrency0],
-    enabled: !!client && !!poolId && isDeployed,
+    // Deliberately NOT keyed per pool.
+    //
+    // One query per coin meant Discover fired a full log scan for every row at
+    // once, and Arc's RPC rate-limits: the scans spent their whole retry
+    // budget backing off and the rows sat on "—" for a minute. One scan of the
+    // PoolManager's Swap events covers every pool, and react-query dedupes it
+    // across all the rows that ask.
+    queryKey: ["swaps"],
+    enabled: !!client && isDeployed,
     refetchInterval: 30_000,
     staleTime: 15_000,
-    queryFn: async (): Promise<PricePoint[]> => {
+    queryFn: async (): Promise<RawSwap[]> => {
       const logs = await getLogsChunked(client as PublicClient, {
         address: addr.poolManager,
         event: swapEvent,
-        eventArgs: { id: poolId! },
       });
-      const points = logs
+      const raw = logs
         .map((l) => {
           const a = (l as unknown as {
-            args: { sqrtPriceX96: bigint; amount0: bigint; amount1: bigint };
+            args: {
+              id: `0x${string}`;
+              sqrtPriceX96: bigint;
+              amount0: bigint;
+              amount1: bigint;
+            };
           }).args;
-          // amount0 is the quote side, signed from the pool's perspective.
-          const q = quoteIsCurrency0 ? a.amount0 : a.amount1;
           return {
+            id: a.id,
             block: l.blockNumber!,
-            price: priceFromSqrtX96(a.sqrtPriceX96, quoteIsCurrency0),
-            volumeQuote: q < 0n ? -q : q,
+            sqrtPriceX96: a.sqrtPriceX96,
+            amount0: a.amount0,
+            amount1: a.amount1,
           };
         })
-        .filter((p) => p.price > 0)
         .sort((x, y) => Number(x.block - y.block));
 
       const times = await blockTimes(
         client as PublicClient,
-        points.map((p) => p.block),
+        raw.map((r) => r.block),
       );
-      return points.map((p) => ({ ...p, time: times.get(String(p.block)) }));
+      return raw.map((r) => ({ ...r, time: times.get(String(r.block)) }));
     },
+    // The pool-specific shaping happens here, so every coin reads the same
+    // cached scan and only the cheap projection differs.
+    select: (raw: RawSwap[]): PricePoint[] =>
+      raw
+        .filter((r) => !poolId || r.id === poolId)
+        .map((r) => {
+          // amount0 is the quote side, signed from the pool's perspective.
+          const q = quoteIsCurrency0 ? r.amount0 : r.amount1;
+          return {
+            block: r.block,
+            price: priceFromSqrtX96(r.sqrtPriceX96, quoteIsCurrency0),
+            volumeQuote: q < 0n ? -q : q,
+            time: r.time,
+          };
+        })
+        .filter((p) => p.price > 0),
   });
 }
+
+/// One Swap log, unshaped. The quote side depends on the pool, so the raw
+/// amounts are cached and each pool projects its own view with `select`.
+type RawSwap = {
+  id: `0x${string}`;
+  block: bigint;
+  sqrtPriceX96: bigint;
+  amount0: bigint;
+  amount1: bigint;
+  time?: number;
+};
 
 // ------------------------------------------------------------ coin stats
 
@@ -533,7 +570,9 @@ export function useCoinStats(coin?: Coin) {
     stats,
     series: series.data,
     isLoading: series.isLoading || holders.isLoading,
-    error: series.error ?? holders.error,
+    // Distinguishable from loading on purpose: a row that could not reach Arc
+    // must not render as "—", which reads as zero.
+    error: series.error ?? holders.error ?? supply.error,
   };
 }
 

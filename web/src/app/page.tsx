@@ -225,7 +225,7 @@ function EmptyForTab({
 /* ------------------------------------------------------------- coin rows */
 
 function CoinRow({ coin, index, head }: { coin: Coin; index: number; head?: bigint }) {
-  const { stats, isLoading } = useCoinStats(coin);
+  const { stats, isLoading, error: statsError } = useCoinStats(coin);
   const trades = useTrades();
   const { follow, referrer } = useReferral();
   const { isConnected } = useAccount();
@@ -282,13 +282,19 @@ function CoinRow({ coin, index, head }: { coin: Coin; index: number; head?: bigi
             <div className="min-w-0 flex-1">
               <p className="text-sm leading-tight font-semibold">{coin.symbol}</p>
               <p className="num mt-0.5 truncate text-[11px] text-secondary">
-                Vol {usd(stats?.volumeQuote)} · {stats?.holders ?? "—"} holder
-                {stats?.holders === 1 ? "" : "s"}
+                {statsError ? (
+                  <span className="text-loss">Could not reach Arc</span>
+                ) : (
+                  <>
+                    Vol {usd(stats?.volumeQuote)} · {stats?.holders ?? "—"} holder
+                    {stats?.holders === 1 ? "" : "s"}
+                  </>
+                )}
               </p>
             </div>
             <div className="shrink-0 text-right">
               <p className={`num text-sm leading-tight font-semibold ${flash}`}>
-                {isLoading ? "…" : fmtPrice(stats?.price ?? 0)}
+                {statsError ? "—" : isLoading ? "…" : fmtPrice(stats?.price ?? 0)}
               </p>
               {change !== null && change !== undefined && (
                 <p
