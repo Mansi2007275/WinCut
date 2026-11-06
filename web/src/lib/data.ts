@@ -94,6 +94,12 @@ export function useMaxTradeSize() {
     queryKey: ["maxTradeSize"],
     enabled: !!client && isDeployed,
     staleTime: 60_000,
+    // Keep asking until it lands. `cap` falls back to 0n, which reads as "no
+    // cap", so a read lost to a rate limit silently removed the over-limit
+    // warning from the trade sheets. The contract still enforces the cap and
+    // the TradeTooLarge mapping still catches the revert, but the warning is
+    // supposed to arrive before the wallet opens, not after.
+    refetchInterval: (q) => (q.state.data === undefined ? 10_000 : false),
     queryFn: async (): Promise<bigint> =>
       client!.readContract({
         address: addr.hook,
