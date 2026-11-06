@@ -36,10 +36,13 @@ contract SeedTrades is Script {
     Currency QUOTE;
     bool quoteIsNative;
 
-    /// @dev Anvil's default mnemonic. These accounts are pre-funded AND signable,
-    ///      so we broadcast with their real keys. vm.deal does NOT work here: it
-    ///      is a simulation cheatcode and never touches the live anvil chain.
-    string constant ANVIL_MNEMONIC = "test test test test test test test test test test test junk";
+    /// @dev DO NOT use anvil's default accounts as traders on an Arc fork.
+    ///      Every well-known test address carries an EIP-7702 delegation on Arc
+    ///      mainnet (code 0xef0100... -> 0x8a67b5020ee254ef48e3b6a04927f39baf7e408a),
+    ///      a sweeper that instantly forwards any native USDC it receives. A fork
+    ///      inherits that, so sell proceeds would vanish and every PnL figure
+    ///      would be wrong. These keys are project-specific and undelegated.
+    bytes32 constant TRADER_SALT = "wincut.seed.v3";
 
     uint256[] pks;
     address[] traders;
@@ -63,10 +66,13 @@ contract SeedTrades is Script {
 
         require(quoteIsNative, "this seed script assumes native USDC on Arc");
 
-        for (uint32 i = 0; i < 14; i++) {
-            uint256 pk = vm.deriveKey(ANVIL_MNEMONIC, i);
+        for (uint256 i = 0; i < 14; i++) {
+            uint256 pk = uint256(keccak256(abi.encodePacked(TRADER_SALT, i)));
+            address who = vm.addr(pk);
+            // A delegated address would silently forward its proceeds away.
+            require(who.code.length == 0, "demo wallet has code; pick another salt");
             pks.push(pk);
-            traders.push(vm.addr(pk));
+            traders.push(who);
         }
         honestPk = pks[0];
         dumperPk = pks[1];
@@ -83,8 +89,14 @@ contract SeedTrades is Script {
         console.log("referrer      :", referrer);
         console.log("");
 
-        // Funding comes from `anvil --accounts 20 --balance ...`, not vm.deal.
-        require(traders[0].balance > 400_000e18, "fund anvil accounts: --balance too low");
+        // Funding is done by scripts/dev.sh via anvil_setBalance before this
+        // runs. vm.deal is a simulation cheatcode and never touches the live
+        // chain, and vm.broadcast cannot send value the script contract does
+        // not hold, so neither works here.
+        require(
+            traders[0].balance >= 1_000_000e18,
+            "demo wallets unfunded: run via scripts/dev.sh, which anvil_setBalance's them"
+        );
 
         _launch("Duke", "DUKE");
         _launch("Tolly", "TOLLY");
@@ -105,7 +117,7 @@ contract SeedTrades is Script {
     // ---------------------------------------------------------------- launch
 
     function _launch(string memory name, string memory symbol) internal {
-        uint256 seed = 120_000e18;
+        uint256 seed = 80_000e18;
         vm.broadcast(honestPk);
         (address coin,) = launcher.launchCoin{value: seed}(name, symbol, "ipfs://wincut", seed, 500_000_000e18);
         coins.push(coin);

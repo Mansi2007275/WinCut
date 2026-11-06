@@ -1,26 +1,123 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+@theme {
+  --color-cream: #fff8e7;
+  --color-ink: #000000;
+  --color-brand: #ffe600;
+  --color-profit: #00e676;
+  --color-loss: #ff3d57;
+  --color-info: #4d7cff;
+  --color-muted: #6b6558;
+
+  /* Supplied by next/font in layout.tsx, with graceful fallbacks. */
+  --font-display: var(--font-archivo), "Archivo Black", system-ui, sans-serif;
+  --font-sans: var(--font-grotesk), "Space Grotesk", system-ui, sans-serif;
+  --font-mono: var(--font-jetbrains), ui-monospace, "Courier New", monospace;
+
+  --shadow-hard: 4px 4px 0 #000;
+  --shadow-hard-sm: 2px 2px 0 #000;
+  --shadow-hard-lg: 6px 6px 0 #000;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+@layer base {
+  html {
+    background: var(--color-cream);
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background: var(--color-cream);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    /* Room for the fixed bottom tab bar. */
+    padding-bottom: 5.5rem;
+    overscroll-behavior-y: none;
+  }
+
+  h1, h2, h3 {
+    font-family: var(--font-display);
+    letter-spacing: -0.02em;
+    line-height: 1.05;
+  }
+
+  /* Every money figure is monospaced so columns line up and digits don't jump. */
+  .money {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-weight: 700;
+  }
+
+  button:disabled { cursor: not-allowed; }
+
+  input[type="text"], input[type="number"] {
+    font-family: var(--font-mono);
+  }
+
+  /* Hide number spinners: the chips and MAX button handle input. */
+  input::-webkit-outer-spin-button,
+  input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+  input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+@layer components {
+  .nb {
+    border: 3px solid var(--color-ink);
+    box-shadow: var(--shadow-hard);
+    background: #fff;
+  }
+
+  .nb-sm {
+    border: 2px solid var(--color-ink);
+    box-shadow: var(--shadow-hard-sm);
+    background: #fff;
+  }
+
+  /* Pressed buttons collapse their shadow and shift into it. */
+  .nb-press {
+    transition: transform 60ms steps(2), box-shadow 60ms steps(2);
+  }
+  .nb-press:active:not(:disabled) {
+    transform: translate(4px, 4px);
+    box-shadow: 0 0 0 var(--color-ink);
+  }
+  .nb-press:disabled {
+    box-shadow: var(--shadow-hard-sm);
+    opacity: 0.5;
+  }
+
+  .tilt-stamp {
+    transform: rotate(-8deg);
+    border: 3px solid var(--color-ink);
+    box-shadow: var(--shadow-hard-sm);
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+/* Count-up for the result screen. */
+@keyframes pop-in {
+  0%   { transform: scale(0.82); opacity: 0; }
+  60%  { transform: scale(1.06); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+.animate-pop { animation: pop-in 320ms steps(6) both; }
+
+@keyframes slide-up {
+  from { transform: translateY(10px); opacity: 0; }
+  to   { transform: translateY(0); opacity: 1; }
+}
+.animate-slide { animation: slide-up 220ms ease-out both; }
+
+@keyframes bar-stripe {
+  from { background-position: 0 0; }
+  to   { background-position: 24px 0; }
+}
+.striped {
+  background-image: repeating-linear-gradient(
+    45deg, rgba(0,0,0,0.14) 0 6px, transparent 6px 12px
+  );
+  animation: bar-stripe 700ms linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-pop, .animate-slide, .striped { animation: none; }
+  .nb-press { transition: none; }
 }

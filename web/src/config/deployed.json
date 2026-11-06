@@ -4,7 +4,7 @@
   "rpcUrl": "http://127.0.0.1:8545",
   "explorer": "https://explorer.arc.io",
   "contracts": {
-    "winCutHook": "0xd4A4ABADf6A309aC156992085A72a04AB251a044",
+    "winCutHook": "0x3BeaFD3E529c0159c338eC97549baA1E7f62E044",
     "winCutLauncher": "0x82Bd83ec6D4bCC8EaB6F6cF7565efE1e41D92Ce5",
     "winCutQuoter": "0x26Df0Ea798971A97Ae121514B32999DfDb220e1f",
     "v4Quoter": "0x26Df0Ea798971A97Ae121514B32999DfDb220e1f",
@@ -19,5 +19,5 @@
     "isNative": true
   },
   "pool": { "fee": 3000, "tickSpacing": 60 },
-  "generatedAt": "2026-11-06T12:01:20Z"
+  "generatedAt": "2026-11-06T12:28:23Z"
 }

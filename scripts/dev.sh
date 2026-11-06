@@ -60,6 +60,15 @@ fi
 echo "[dev]      chain id: $(cast chain-id --rpc-url "$LOCAL_RPC")"
 
 echo "[dev] 2/5  sanity-checking the forked v4 deployment"
+# Arc mainnet carries EIP-7702 delegations on every well-known test address
+# (code 0xef0100...), a sweeper that forwards any native USDC received. A fork
+# inherits it, so anvil's default accounts must never hold demo funds.
+DEPLOYER_CODE=$(cast code "$DEPLOYER" --rpc-url "$LOCAL_RPC" 2>/dev/null)
+if [[ -n "$DEPLOYER_CODE" && "$DEPLOYER_CODE" != "0x" ]]; then
+  echo "[dev]      NOTE: the deployer carries an EIP-7702 delegation on Arc."
+  echo "[dev]      Fine for sending transactions; the seed script therefore funds"
+  echo "[dev]      separate undelegated wallets to hold trading proceeds."
+fi
 PM_SIZE=$(cast code "$POOL_MANAGER" --rpc-url "$LOCAL_RPC" | wc -c)
 if [[ "$PM_SIZE" -lt 100 ]]; then
   echo "[dev] ERROR: no PoolManager bytecode on the fork. Is ARC_RPC correct?"; exit 1
@@ -83,6 +92,25 @@ fi
 echo "[dev]      hook     = $HOOK"
 echo "[dev]      launcher = $LAUNCHER"
 echo "[dev]      quoter   = $QUOTER"
+
+echo "[dev] 3b   funding undelegated demo wallets via anvil_setBalance"
+# Must match TRADER_SALT in script/SeedTrades.s.sol:
+#   keccak256(abi.encodePacked(bytes32("wincut.seed.v3"), uint256(i)))
+# These wallets are NOT anvil's defaults, because every well-known test
+# address carries an EIP-7702 sweeper delegation on Arc mainnet.
+SALT32="77696e6375742e736565642e7633000000000000000000000000000000000000"
+FUND_WEI="0x1a784379d99db42000000"   # 2,000,000e18, enough for 3 launches + trading
+for i in $(seq 0 13); do
+  IHEX=$(printf "%064x" "$i")
+  PK=$(cast keccak "0x${SALT32}${IHEX}")
+  A=$(cast wallet address --private-key "$PK")
+  CODE=$(cast code "$A" --rpc-url "$LOCAL_RPC" 2>/dev/null)
+  if [[ -n "$CODE" && "$CODE" != "0x" ]]; then
+    echo "[dev] ERROR: demo wallet $A has code (delegation). Change TRADER_SALT."; exit 1
+  fi
+  cast rpc anvil_setBalance "$A" "$FUND_WEI" --rpc-url "$LOCAL_RPC" >/dev/null
+done
+echo "[dev]      funded 14 clean wallets"
 
 echo "[dev] 4/5  seeding real trades through the real Universal Router"
 HOOK="$HOOK" LAUNCHER="$LAUNCHER" forge script script/SeedTrades.s.sol \
