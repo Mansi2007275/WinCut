@@ -1,66 +1,70 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
+import { AnimatePresence, motion } from "framer-motion";
 import { Page } from "@/components/Shell";
 import {
-  AddressLink,
+  Avatar,
   Badge,
   Card,
+  ColumnHeader,
   DumperStamp,
   Empty,
   ErrorBox,
   HonestyBar,
+  Segmented,
   SkeletonRows,
-  Tabs,
 } from "@/components/ui";
 import { useLeaderboard, type LeaderRow } from "@/lib/data";
 import { isDeployed } from "@/lib/chain";
-import { usd } from "@/lib/format";
+import { short, usd } from "@/lib/format";
 
 type BoardTab = "own" | "followers";
+
+const TABS = [
+  { id: "own" as const, label: "Own profit" },
+  { id: "followers" as const, label: "Followers' profit" },
+];
 
 export default function BoardPage() {
   const [tab, setTab] = useState<BoardTab>("own");
   const { rows, isLoading, error } = useLeaderboard();
 
-  const sorted = rows
-    ? [...rows].sort((a, b) =>
-        tab === "own"
-          ? Number(b.ownPnl - a.ownPnl)
-          : Number(b.followersPnl - a.followersPnl),
-      )
-    : undefined;
+  const sorted = useMemo(
+    () =>
+      rows
+        ? [...rows].sort((a, b) =>
+            tab === "own" ? Number(b.ownPnl - a.ownPnl) : Number(b.followersPnl - a.followersPnl),
+          )
+        : undefined,
+    [rows, tab],
+  );
+
+  const dumpers = (rows ?? []).filter((r) => r.isDumper);
 
   return (
     <Page>
-      <div>
-        <h1 className="text-2xl uppercase">Leaderboard</h1>
-        <p className="mt-1 text-xs text-muted">
-          Built from WinCutHook events on chain. No indexer, nothing seeded.
+      <header>
+        <h1 className="text-2xl font-semibold">Leaderboard</h1>
+        <p className="mt-1.5 text-sm leading-snug text-secondary">
+          Ranked by what followers actually made, from WinCut hook events on chain. No indexer,
+          nothing seeded.
         </p>
-      </div>
+      </header>
 
-      <Tabs
-        options={[
-          { id: "own" as BoardTab, label: "Own profit" },
-          { id: "followers" as BoardTab, label: "Followers' profit" },
-        ]}
-        value={tab}
-        onChange={setTab}
-      />
+      <Segmented options={TABS} value={tab} onChange={setTab} />
 
       {tab === "followers" && (
-        <div className="nb-sm bg-brand p-3">
-          <p className="text-[11px] font-bold leading-snug">
-            This is the board that matters. A trader can look great on their own
-            profit while the people copying them lose money. Under WinCut they
-            earn nothing from those followers.
+        <Card tone="accent" className="p-3">
+          <p className="text-[12px] leading-snug text-text/85">
+            This is the board that matters. A trader can look great on their own profit while the
+            people copying them lose money. Under WinCut they earn nothing from those followers.
           </p>
-        </div>
+        </Card>
       )}
 
-      {isLoading && <SkeletonRows rows={3} height="h-32" />}
+      {isLoading && <SkeletonRows rows={3} height="h-24" />}
       {error && <ErrorBox title="Cannot read events" detail={String(error)} />}
 
       {isDeployed && sorted && sorted.length === 0 && (
@@ -70,100 +74,120 @@ export default function BoardPage() {
         />
       )}
 
-      {sorted?.map((r, i) => (
-        <RowCard key={r.trader} row={r} rank={i + 1} tab={tab} />
-      ))}
+      {sorted && sorted.length > 0 && (
+        <>
+          <ColumnHeader>
+            <span>Trader</span>
+            <span>{tab === "own" ? "Own profit" : "Followers"}</span>
+          </ColumnHeader>
+          <div className="flex flex-col gap-2">
+            <AnimatePresence initial={false}>
+              {sorted.map((r, i) => (
+                <motion.div
+                  key={r.trader}
+                  layout
+                  initial={{ opacity: 0, y: 6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.2, layout: { duration: 0.28 } }}
+                >
+                  <RowCard row={r} rank={i + 1} tab={tab} />
+                </motion.div>
+              ))}
+            </AnimatePresence>
+          </div>
+        </>
+      )}
+
+      {/* The dumper explainer stays visible even with nobody flagged: it is
+          the rule the second board exists to enforce, and saying it only once
+          somebody is caught would make it read as an accusation. */}
+      {sorted && sorted.length > 0 && (
+        <Card className="p-4">
+          <p className="flex items-center gap-2 text-sm font-semibold">
+            <DumperStamp />
+            {dumpers.length === 0
+              ? "No dumpers yet"
+              : `${dumpers.length} dumper${dumpers.length === 1 ? "" : "s"} flagged`}
+          </p>
+          <p className="mt-1.5 text-[12px] leading-snug text-secondary">
+            A trader is flagged when their own profit is positive while the people copying them
+            lose. They earn nothing from those followers.
+          </p>
+        </Card>
+      )}
+
+      {sorted && sorted.length > 0 && (
+        <Card className="p-4">
+          <div className="flex items-baseline justify-between gap-2">
+            <span className="text-sm font-semibold">Honesty score</span>
+            <span className="text-[11px] text-secondary">followers&apos; profit ÷ own profit</span>
+          </div>
+          <div className="mt-2.5 h-1.5 w-full rounded-pill bg-gradient-to-r from-loss via-secondary to-profit" />
+          <div className="mt-1.5 flex justify-between text-[10px] text-secondary">
+            <span>Dumped on followers</span>
+            <span>Neutral</span>
+            <span>Followers won</span>
+          </div>
+        </Card>
+      )}
     </Page>
   );
 }
 
 function RowCard({ row, rank, tab }: { row: LeaderRow; rank: number; tab: BoardTab }) {
-  const highlight = tab === "followers" && row.isDumper;
   const primary = tab === "own" ? row.ownPnl : row.followersPnl;
+  const honest = !row.isDumper && row.followers > 0 && row.followersPnl > 0n;
 
   return (
-    <Card tone={highlight ? "loss" : "surface"} className="p-4">
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="font-display text-base">#{rank}</span>
-            {/* Addresses, not invented handles. A made-up name implies the app
-                knows who this is, which it does not. */}
-            <Link
-              href={`/trader/${row.trader}`}
-              className={`money text-sm underline ${highlight ? "text-white" : ""}`}
-            >
-              {row.trader.slice(0, 6)}…{row.trader.slice(-4)}
-            </Link>
-            {row.isDumper && <DumperStamp />}
-            {!row.isDumper && row.followers > 0 && row.followersPnl > 0n && (
-              <Badge tone="profit">Honest</Badge>
-            )}
+    <Link href={`/trader/${row.trader}`}>
+      <Card
+        tone={row.isDumper && tab === "followers" ? "loss" : "surface"}
+        className="p-3 transition-colors hover:bg-elevated/40"
+      >
+        <div className="flex items-center gap-3">
+          <span className="num w-4 shrink-0 text-center text-xs text-secondary">{rank}</span>
+          <Avatar address={row.trader} size={34} />
+          <div className="min-w-0 flex-1">
+            <p className="flex flex-wrap items-center gap-1.5">
+              {/* Addresses, not invented handles. A made-up name implies the
+                  app knows who this is, which it does not. */}
+              <span className="num text-sm font-semibold">{short(row.trader)}</span>
+              {row.isDumper && <DumperStamp />}
+              {honest && <Badge tone="profit">Honest</Badge>}
+            </p>
+            <p className="num mt-0.5 truncate text-[11px] text-secondary">
+              {row.followers} follower{row.followers === 1 ? "" : "s"} · own{" "}
+              {usd(row.ownPnl, { sign: true })}
+              {row.trades > 0 && (
+                <> · win rate {Math.round((row.wins / row.trades) * 100)}%</>
+              )}
+            </p>
           </div>
-          <p className={`mt-0.5 ${highlight ? "text-white/80" : "text-muted"}`}>
-            <AddressLink address={row.trader} label="explorer ↗" className="text-[10px]" />
-          </p>
+          <div className="shrink-0 text-right">
+            <p
+              className={`num text-sm font-semibold ${
+                primary > 0n ? "text-profit" : primary < 0n ? "text-loss" : "text-text"
+              }`}
+            >
+              {usd(primary, { sign: true })}
+            </p>
+            <p className="text-[10px] text-secondary">
+              {tab === "own" ? "own profit" : "followers"}
+            </p>
+          </div>
         </div>
 
-        <div className="text-right">
-          <p
-            className={`money text-xl ${
-              highlight ? "text-white" : primary >= 0n ? "text-[#00a152]" : "text-[#d32f45]"
-            }`}
-          >
-            {usd(primary, { sign: true })}
-          </p>
-          <p className={`text-[10px] ${highlight ? "text-white/80" : "text-muted"}`}>
-            {tab === "own" ? "own profit" : `from ${row.followers} follower${row.followers === 1 ? "" : "s"}`}
-          </p>
+        <div className="mt-2.5">
+          <div className="mb-1 flex items-baseline justify-between">
+            <span className="text-[10px] tracking-wide text-secondary uppercase">Honesty</span>
+            <span className="num text-[11px] text-secondary">
+              {row.honesty === null ? "—" : row.honesty.toFixed(2)}
+            </span>
+          </div>
+          <HonestyBar score={row.honesty} />
         </div>
-      </div>
-
-      <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1">
-        <Mini label="Own" value={usd(row.ownPnl, { sign: true })} invert={highlight} positive={row.ownPnl >= 0n} />
-        <Mini
-          label="Followers"
-          value={usd(row.followersPnl, { sign: true })}
-          invert={highlight}
-          positive={row.followersPnl >= 0n}
-        />
-        <Mini
-          label="Win rate"
-          value={row.trades ? `${Math.round((row.wins / row.trades) * 100)}%` : "—"}
-          invert={highlight}
-        />
-        <Mini label="Exits" value={String(row.trades)} invert={highlight} />
-      </div>
-
-      <div className="mt-3">
-        <div className="mb-1 flex items-baseline justify-between">
-          <span className={`text-[10px] font-bold uppercase ${highlight ? "text-white/80" : "text-muted"}`}>
-            Honesty score
-          </span>
-          <span className={`money text-[11px] ${highlight ? "text-white" : ""}`}>
-            {row.honesty === null ? "—" : row.honesty.toFixed(2)}
-          </span>
-        </div>
-        <HonestyBar score={row.honesty} />
-        <p className={`mt-1 text-[10px] ${highlight ? "text-white/80" : "text-muted"}`}>
-          followers&apos; profit ÷ own profit
-        </p>
-      </div>
-    </Card>
-  );
-}
-
-function Mini({
-  label, value, invert, positive,
-}: { label: string; value: string; invert?: boolean; positive?: boolean }) {
-  const tone =
-    positive === undefined
-      ? invert ? "text-white" : "text-ink"
-      : invert ? "text-white" : positive ? "text-[#00a152]" : "text-[#d32f45]";
-  return (
-    <div className="flex items-baseline justify-between gap-2">
-      <span className={`text-[10px] uppercase ${invert ? "text-white/70" : "text-muted"}`}>{label}</span>
-      <span className={`money text-xs ${tone}`}>{value}</span>
-    </div>
+      </Card>
+    </Link>
   );
 }
