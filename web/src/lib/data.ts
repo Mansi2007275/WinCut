@@ -503,11 +503,15 @@ export function useCoinStats(coin?: Coin) {
     },
   });
 
-  // Fixed at deployment and never minted again, so one read is enough.
+  // Fixed at deployment and never minted again, so one successful read is
+  // enough -- but only a SUCCESSFUL one. With staleTime: Infinity and nothing
+  // to refetch it, a read that lost its retries to a rate limit left market
+  // cap on "—" permanently. Poll until it lands, then stop.
   const supply = useQuery({
     queryKey: ["totalSupply", coin?.address],
     enabled: !!client && !!coin && isDeployed,
     staleTime: Infinity,
+    refetchInterval: (q) => (q.state.data === undefined ? 10_000 : false),
     queryFn: async (): Promise<bigint> =>
       client!.readContract({
         address: coin!.address,
