@@ -478,13 +478,19 @@ const transferEvent = parseAbiItem(
  * cannot sell are excluded, because counting the pool itself as a holder would
  * inflate every coin by one and make a brand new coin look like it has company.
  */
-export function useCoinStats(coin?: Coin) {
+/**
+ * @param enabled gate for list rows. Every coin costs a full Swap scan and a
+ * full Transfer scan, each ~10 windows of 5,000 blocks and growing. With
+ * seven coins that is well over a hundred eth_getLogs on one screen, and
+ * Arc's RPC refuses long before they finish. Rows off screen do not ask.
+ */
+export function useCoinStats(coin?: Coin, enabled = true) {
   const client = usePublicClient();
-  const series = usePriceSeries(coin?.poolId, coin ? quoteIsCurrency0(coin.poolKey) : true);
+  const series = usePriceSeries(enabled ? coin?.poolId : undefined, coin ? quoteIsCurrency0(coin.poolKey) : true);
 
   const holders = useQuery({
     queryKey: ["holders", coin?.address],
-    enabled: !!client && !!coin && isDeployed,
+    enabled: enabled && !!client && !!coin && isDeployed,
     refetchInterval: 60_000,
     staleTime: 30_000,
     queryFn: async (): Promise<number> => {
@@ -515,7 +521,7 @@ export function useCoinStats(coin?: Coin) {
   // cap on "—" permanently. Poll until it lands, then stop.
   const supply = useQuery({
     queryKey: ["totalSupply", coin?.address],
-    enabled: !!client && !!coin && isDeployed,
+    enabled: enabled && !!client && !!coin && isDeployed,
     staleTime: Infinity,
     refetchInterval: (q) => (q.state.data === undefined ? 10_000 : false),
     queryFn: async (): Promise<bigint> =>

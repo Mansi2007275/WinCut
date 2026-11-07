@@ -28,6 +28,7 @@ import { useCoins, useCoinStats, useHead, useLeaderboard, useTrades, type Coin }
 import { isDeployed, QUOTE } from "@/lib/chain";
 import { useReferral } from "@/lib/referral";
 import { useWatchlist } from "@/lib/watchlist";
+import { useInView } from "@/lib/useInView";
 import { buyCoin } from "@/lib/trade";
 import { reason } from "@/components/TradePanel";
 import { ago, coins as fmtCoins, price as fmtPrice, short, usd } from "@/lib/format";
@@ -225,7 +226,11 @@ function EmptyForTab({
 /* ------------------------------------------------------------- coin rows */
 
 function CoinRow({ coin, index, head }: { coin: Coin; index: number; head?: bigint }) {
-  const { stats, isLoading, error: statsError } = useCoinStats(coin);
+  // Rows only fetch once they are near the viewport. Seven coins each doing a
+  // full Swap and Transfer scan is over a hundred eth_getLogs at once, which
+  // Arc's RPC refuses outright.
+  const { ref, seen } = useInView<HTMLDivElement>();
+  const { stats, isLoading, error: statsError } = useCoinStats(coin, seen);
   const trades = useTrades();
   const { follow, referrer } = useReferral();
   const { isConnected } = useAccount();
@@ -271,6 +276,7 @@ function CoinRow({ coin, index, head }: { coin: Coin; index: number; head?: bigi
 
   return (
     <motion.div
+      ref={ref}
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: Math.min(index * 0.03, 0.15), duration: 0.2 }}
