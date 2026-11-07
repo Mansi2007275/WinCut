@@ -16,6 +16,7 @@ import {
 } from "./TradePanel";
 import type { Coin } from "@/lib/data";
 import { QUOTE } from "@/lib/chain";
+import { setTradeOpen } from "@/lib/rpc";
 import { coins as fmtCoins, short, usd } from "@/lib/format";
 
 /**
@@ -43,6 +44,14 @@ export function TradeSheet({
   onClose: () => void;
   onResult: (r: TradeResult) => void;
 }) {
+  // The screen polls several reads every 5s. That is the same endpoint the
+  // gas estimate needs, and it is what tips Arc's limiter over at the exact
+  // moment it matters most, so the fast polls are held while the sheet is up.
+  useEffect(() => {
+    setTradeOpen(open);
+    return () => setTradeOpen(false);
+  }, [open]);
+
   // Escape closes, and the page behind must not scroll under the sheet.
   useEffect(() => {
     if (!open) return;
@@ -292,7 +301,27 @@ function SheetBody({
       {t.overLimit && (
         <ErrorBox title={maxTradeLabel(t.cap)} detail={capDetail(side, t.tradeQuoteSide)} />
       )}
-      {t.error && !t.overLimit && <ErrorBox title="Quote or transaction failed" detail={t.error} />}
+
+      {/* A throttled RPC is not a failed trade. viem wraps Arc's -32005 in a
+          ContractFunctionExecutionError, so the raw text claims the contract
+          reverted -- which is the opposite of the truth and sends people off
+          debugging a swap that was never submitted. */}
+      {t.retrying && (
+        <Card tone="accent" className="px-3 py-2">
+          <p className="text-xs leading-snug text-accent">Arc&apos;s RPC is busy. Retrying…</p>
+        </Card>
+      )}
+
+      {t.error && !t.overLimit && !t.retrying && (
+        <ErrorBox
+          title={t.rateLimited ? "Arc's RPC is rate limiting right now" : "Quote or transaction failed"}
+          detail={
+            t.rateLimited
+              ? "Wait a minute and try again, or switch your wallet's Arc RPC to https://rpc.drpc.testnet.arc.io."
+              : t.error
+          }
+        />
+      )}
 
       {/* ----------------------------------------------------- confirm */}
       {t.isConnected ? (

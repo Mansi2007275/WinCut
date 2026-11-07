@@ -7,6 +7,7 @@ import { winCutHookAbi, winCutLauncherAbi, erc20Abi } from "@/config/abis";
 import { addr, isDeployed, quoteIsCurrency0, type PoolKey } from "./chain";
 import { changePct, priceFromSqrtX96 } from "./format";
 import { getLogsChunked } from "./logs";
+import { useLivePollMs } from "./rpc";
 
 export type Coin = {
   address: Address;
@@ -111,10 +112,11 @@ export function useMaxTradeSize() {
 
 export function usePosition(trader?: Address, poolId?: `0x${string}`) {
   const client = usePublicClient();
+  const livePoll = useLivePollMs();
   return useQuery({
     queryKey: ["position", trader, poolId],
     enabled: !!client && !!trader && !!poolId,
-    refetchInterval: 5_000,
+    refetchInterval: livePoll,
     queryFn: async () => {
       const [amount, cost] = await client!.readContract({
         address: addr.hook,
@@ -130,10 +132,11 @@ export function usePosition(trader?: Address, poolId?: `0x${string}`) {
 /// Claimable is read DIRECTLY from the hook: it is the source of truth for money.
 export function useAccountState(account?: Address) {
   const client = usePublicClient();
+  const livePoll = useLivePollMs();
   return useQuery({
     queryKey: ["accountState", account],
     enabled: !!client && !!account,
-    refetchInterval: 5_000,
+    refetchInterval: livePoll,
     queryFn: async () => {
       const [claimable, lossCredit] = await Promise.all([
         client!.readContract({
@@ -156,10 +159,11 @@ export function useAccountState(account?: Address) {
 
 export function useCoinBalance(coin?: Address, account?: Address) {
   const client = usePublicClient();
+  const livePoll = useLivePollMs();
   return useQuery({
     queryKey: ["coinBalance", coin, account],
     enabled: !!client && !!coin && !!account,
-    refetchInterval: 5_000,
+    refetchInterval: livePoll,
     queryFn: () =>
       client!.readContract({ address: coin!, abi: erc20Abi, functionName: "balanceOf", args: [account!] }),
   });
@@ -343,10 +347,11 @@ export function useLeaderboard() {
 /// The current block, used to render "3m ago" without fetching timestamps.
 export function useHead() {
   const client = usePublicClient();
+  const livePoll = useLivePollMs();
   return useQuery({
     queryKey: ["head"],
     enabled: !!client,
-    refetchInterval: 5_000,
+    refetchInterval: livePoll,
     queryFn: () => client!.getBlockNumber(),
   });
 }

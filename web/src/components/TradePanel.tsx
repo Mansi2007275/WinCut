@@ -17,6 +17,12 @@ import { quoteBuy, quoteSell } from "@/lib/quote";
 import { buildSwap, encodeAttribution, deadline, MAX_UINT160 } from "@/lib/swap";
 import { readBuy, readSell, type BuyOutcome, type SellOutcome } from "@/lib/receipt";
 import { usd, parseUsd, applySlippage } from "@/lib/format";
+import {
+  isRateLimit,
+  isUserRejection,
+  withRateLimitRetry,
+  writeWithFallbackGas,
+} from "@/lib/rpc";
 
 export const SLIPPAGE_BPS = 50; // 0.5%
 
@@ -76,6 +82,12 @@ export function useTrade({
   const [step, setStep] = useState<Step | null>(null);
   const [done, setDone] = useState<Step[]>([]);
   const [error, setError] = useState<string | undefined>();
+  /// Set while a rate-limited attempt is waiting to retry, so the panel can
+  /// say the network is busy instead of looking frozen.
+  const [retrying, setRetrying] = useState(false);
+  /// Kept as the object, not the string: whether it was a rate limit is a
+  /// property of the error chain and cannot be recovered from the message.
+  const [lastError, setLastError] = useState<unknown>(null);
   const [quote, setQuote] = useState<Quote | null>(null);
   const [quoting, setQuoting] = useState(false);
 
@@ -172,10 +184,16 @@ export function useTrade({
     !overLimit &&
     (side === "buy" ? amountQuote > 0n : sellCoins > 0n && sellCoins <= bal);
 
+  function onRetry() {
+    setRetrying(true);
+  }
+
   async function submit() {
     if (!wallet || !client || !address) return;
     setBusy(true);
     setError(undefined);
+    setRetrying(false);
+    setLastError(null);
     setDone([]);
 
     const isBuy = side === "buy";
@@ -198,29 +216,41 @@ export function useTrade({
         });
         if (allowance < amountIn) {
           toast.update(toastId, { detail: "Approving the coin for Permit2" });
-          const h = await wallet.writeContract({
-            address: coin.address,
-            abi: erc20Abi,
-            functionName: "approve",
-            args: [addr.permit2, 2n ** 256n - 1n],
-          });
+          const h = await withRateLimitRetry(
+            () =>
+              wallet.writeContract({
+                address: coin.address,
+                abi: erc20Abi,
+                functionName: "approve",
+                args: [addr.permit2, 2n ** 256n - 1n],
+                chain: wallet.chain,
+                account: wallet.account!,
+              }),
+            onRetry,
+          );
           await client.waitForTransactionReceipt({ hash: h });
         }
         setDone((d) => [...d, "approve"]);
 
         setStep("permit");
         toast.update(toastId, { detail: "Permitting the router" });
-        const h2 = await wallet.writeContract({
-          address: addr.permit2,
-          abi: permit2Abi,
-          functionName: "approve",
-          args: [
-            coin.address,
-            addr.universalRouter,
-            MAX_UINT160,
-            Math.floor(Date.now() / 1000) + 86_400,
-          ],
-        });
+        const h2 = await withRateLimitRetry(
+          () =>
+            wallet.writeContract({
+              address: addr.permit2,
+              abi: permit2Abi,
+              functionName: "approve",
+              args: [
+                coin.address,
+                addr.universalRouter,
+                MAX_UINT160,
+                Math.floor(Date.now() / 1000) + 86_400,
+              ],
+              chain: wallet.chain,
+              account: wallet.account!,
+            }),
+          onRetry,
+        );
         await client.waitForTransactionReceipt({ hash: h2 });
         setDone((d) => [...d, "permit"]);
       }
@@ -235,12 +265,19 @@ export function useTrade({
         quoteIsNative: QUOTE.isNative,
       });
 
-      const txHash = await wallet.writeContract({
+      // Gas estimated on the app's transport, which has the fallback
+      // endpoints, and passed explicitly so MetaMask does not re-estimate on
+      // the throttled one.
+      const txHash = await writeWithFallbackGas({
+        wallet,
+        client,
         address: addr.universalRouter,
         abi: universalRouterAbi,
         functionName: "execute",
         args: [plan.commands, plan.inputs, deadline()],
         value: plan.value,
+        account: address,
+        onRetry,
       });
       toast.update(toastId, { detail: "Waiting for the block", hash: txHash });
 
@@ -279,10 +316,17 @@ export function useTrade({
       });
     } catch (e) {
       const msg = reason(e, cap);
+      const limited = isRateLimit(e);
+      setLastError(e);
       setError(msg);
-      toast.update(toastId, { kind: "failed", title: "Transaction failed", detail: msg });
+      toast.update(toastId, {
+        kind: "failed",
+        title: limited ? "Arc's RPC is busy" : isUserRejection(e) ? "Cancelled" : "Transaction failed",
+        detail: msg,
+      });
     } finally {
       setBusy(false);
+      setRetrying(false);
       setStep(null);
     }
   }
@@ -303,9 +347,12 @@ export function useTrade({
     overLimit,
     tradeQuoteSide,
     busy,
+    retrying,
     step,
     done,
     error,
+    /// True when the last failure was the network refusing, not a revert.
+    rateLimited: isRateLimit(lastError),
     canSubmit,
     isConnected,
     submit,

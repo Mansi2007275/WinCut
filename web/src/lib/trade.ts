@@ -3,6 +3,7 @@ import type { WalletClient } from "viem";
 import { universalRouterAbi } from "@/config/abis";
 import { addr, QUOTE, buyDirection } from "./chain";
 import { buildSwap, encodeAttribution, deadline } from "./swap";
+import { writeWithFallbackGas } from "./rpc";
 import type { PoolKey } from "./chain";
 
 /**
@@ -27,6 +28,8 @@ export async function buyCoin(args: {
   follow?: Address;
   referrer?: Address;
   onHash?: (h: `0x${string}`) => void;
+  /// Called when a rate-limited attempt is about to be retried.
+  onRetry?: (attempt: number, waitMs: number) => void;
 }): Promise<{ hash: `0x${string}`; receipt: TransactionReceipt }> {
   const plan = buildSwap({
     key: args.poolKey,
@@ -37,14 +40,20 @@ export async function buyCoin(args: {
     quoteIsNative: QUOTE.isNative,
   });
 
-  const hash = await args.wallet.writeContract({
+  // Routed through writeWithFallbackGas so the gas estimate runs on the app's
+  // transport, which has the fallback endpoints. Calling writeContract
+  // directly makes MetaMask estimate on its own RPC, and when Arc throttles
+  // that one the failure arrives dressed up as a contract revert.
+  const hash = await writeWithFallbackGas({
+    wallet: args.wallet,
+    client: args.client,
     address: addr.universalRouter,
     abi: universalRouterAbi,
     functionName: "execute",
     args: [plan.commands, plan.inputs, deadline()],
     value: plan.value,
-    chain: args.wallet.chain,
     account: args.wallet.account!,
+    onRetry: args.onRetry,
   });
   args.onHash?.(hash);
 
