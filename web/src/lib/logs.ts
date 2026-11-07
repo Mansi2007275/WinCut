@@ -1,5 +1,6 @@
 import type { AbiEvent, Address, PublicClient, Log } from "viem";
 import deployed from "@/config/deployed.json";
+import { explorerLogsAvailable, fetchExplorerLogs } from "./explorerLogs";
 
 /**
  * Chunked `getLogs`, with finished windows cached for the life of the page.
@@ -68,6 +69,23 @@ export async function getLogsChunked<T extends AbiEvent>(
     eventArgs?: Record<string, unknown>;
   },
 ): Promise<Log[]> {
+  // The explorer's index answers a contract's whole history in one request,
+  // where the RPC needs fifteen windows and refuses most of them. Try it
+  // first and keep the window scan as the fallback: contracts whose logs run
+  // to many pages (the PoolManager covers every pool on Arc) throw
+  // ExplorerTooLarge rather than return a truncated history.
+  if (explorerLogsAvailable) {
+    try {
+      return await fetchExplorerLogs({
+        address: args.address,
+        event: args.event,
+        eventArgs: args.eventArgs,
+      });
+    } catch {
+      // Fall through to the RPC path.
+    }
+  }
+
   const latest = args.latest ?? (await client.getBlockNumber());
   const span = args.fallbackSpan ?? 20_000n;
 

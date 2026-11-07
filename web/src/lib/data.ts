@@ -442,11 +442,21 @@ export function usePriceSeries(poolId?: `0x${string}`, quoteIsCurrency0 = true) 
         .filter((p) => p.price > 0)
         .sort((x, y) => Number(x.block - y.block));
 
-      const times = await blockTimes(
-        client as PublicClient,
-        points.map((p) => p.block),
-      );
-      return points.map((p) => ({ ...p, time: times.get(String(p.block)) }));
+      // The explorer path already carries each log's block_timestamp, so
+      // only the blocks it could not supply need a getBlock.
+      const fromLog = new Map<string, number>();
+      for (const l of logs) {
+        const t = (l as unknown as { blockTimestamp?: number }).blockTimestamp;
+        if (t !== undefined && l.blockNumber != null) fromLog.set(String(l.blockNumber), t);
+      }
+      const missing = points.map((p) => p.block).filter((b) => !fromLog.has(String(b)));
+      const times = missing.length
+        ? await blockTimes(client as PublicClient, missing)
+        : new Map<string, number>();
+      return points.map((p) => ({
+        ...p,
+        time: fromLog.get(String(p.block)) ?? times.get(String(p.block)),
+      }));
     },
   });
 }
