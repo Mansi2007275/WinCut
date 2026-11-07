@@ -42,10 +42,11 @@ export function windowed(series: PricePoint[] | undefined, tf: Timeframe): Price
 /**
  * Price history, drawn from the pool's own Swap events.
  *
- * The sqrtPriceX96 on each Swap is the pool price after that swap. This is the
- * only source that reflects what the pool actually did; the hook's Bought/Sold
- * events carry a trader's average fill, which is a different number and would
- * draw a misleading chart.
+ * Each point is the price a trade actually executed at, from the hook's own
+ * Bought and Sold events. The PoolManager's post-swap mid-price would be the
+ * better number, but its logs cover every pool on Arc and neither the index
+ * nor the RPC will serve them, so that chart was simply blank. A last-traded
+ * price series is what most exchanges plot, and the caption says which it is.
  *
  * A one-point series is still drawn: a coin that has been launched but never
  * traded does have a price, and an empty box implies the chart is broken.

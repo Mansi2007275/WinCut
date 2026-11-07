@@ -209,8 +209,8 @@ function CoinScreen() {
       </div>
 
       <p className="text-[11px] leading-snug text-secondary">
-        Drawn from the PoolManager&apos;s own Swap events — the pool price after each swap, not an
-        average fill.
+        Each point is the price a real trade executed at, read from the hook&apos;s own Bought and
+        Sold events — last traded price, not a pool mid-price.
       </p>
 
       {/* -------------------------------------------------------- stats */}

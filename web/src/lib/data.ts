@@ -1,11 +1,12 @@
 "use client";
 
+import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { usePublicClient } from "wagmi";
 import { formatUnits, parseAbiItem, type Address, type PublicClient } from "viem";
 import { winCutHookAbi, winCutLauncherAbi, erc20Abi } from "@/config/abis";
 import { addr, isDeployed, quoteIsCurrency0, type PoolKey } from "./chain";
-import { changePct, priceFromSqrtX96 } from "./format";
+import { changePct } from "./format";
 import { getLogsChunked } from "./logs";
 import { useLivePollMs } from "./rpc";
 
@@ -184,6 +185,8 @@ export type Trade = {
   referrer?: Address;
   block: bigint;
   tx: `0x${string}`;
+  /// Unix seconds, when the source could supply it.
+  time?: number;
 };
 
 const ZERO = "0x0000000000000000000000000000000000000000";
@@ -224,6 +227,7 @@ async function fetchTrades(client: PublicClient): Promise<Trade[]> {
       referrer: a.referrer === ZERO ? undefined : a.referrer,
       block: l.blockNumber!,
       tx: l.transactionHash!,
+      time: (l as unknown as { blockTimestamp?: number }).blockTimestamp,
     };
   });
 
@@ -239,6 +243,7 @@ async function fetchTrades(client: PublicClient): Promise<Trade[]> {
       fee: a.fee!,
       block: l.blockNumber!,
       tx: l.transactionHash!,
+      time: (l as unknown as { blockTimestamp?: number }).blockTimestamp,
     };
   });
 
@@ -358,10 +363,6 @@ export function useHead() {
 
 // ------------------------------------------------------- price from swaps
 
-const swapEvent = parseAbiItem(
-  "event Swap(bytes32 indexed id, address indexed sender, int128 amount0, int128 amount1, uint160 sqrtPriceX96, uint128 liquidity, int24 tick, uint24 fee)",
-);
-
 export type PricePoint = {
   block: bigint;
   price: number;
@@ -372,93 +373,30 @@ export type PricePoint = {
   time?: number;
 };
 
-/**
- * Block number to unix seconds.
- *
- * A block's timestamp never changes, so this is cached for the life of the
- * page. Without it every 30s refetch would re-request the same timestamps and
- * walk straight into Arc's rate limiter.
- */
-const blockTimeCache = new Map<string, number>();
-
-async function blockTimes(client: PublicClient, blocks: bigint[]): Promise<Map<string, number>> {
-  const missing = [...new Set(blocks.map(String))].filter((b) => !blockTimeCache.has(b));
-  // The transport batches these, so a few hundred points is a handful of
-  // HTTP requests rather than a few hundred.
-  await Promise.all(
-    missing.map(async (b) => {
-      try {
-        const blk = await client.getBlock({ blockNumber: BigInt(b) });
-        blockTimeCache.set(b, Number(blk.timestamp));
-      } catch {
-        // A missing timestamp just means that point falls back to its block
-        // number ordering; it must not take the whole chart down.
-      }
-    }),
-  );
-  return blockTimeCache;
-}
-
-/**
- * Real price history for one pool.
- *
- * Read from the PoolManager's own Swap events, whose sqrtPriceX96 is the pool
- * price after each swap. This is the only source that reflects what the pool
- * actually did; the hook's Bought/Sold events carry a trader's average fill,
- * which is a different number and would draw a misleading chart.
- */
 export function usePriceSeries(poolId?: `0x${string}`, quoteIsCurrency0 = true) {
-  const client = usePublicClient();
-  return useQuery({
-    queryKey: ["priceSeries", poolId, quoteIsCurrency0],
-    enabled: !!client && !!poolId && isDeployed,
-    refetchInterval: 30_000,
-    staleTime: 15_000,
-    queryFn: async (): Promise<PricePoint[]> => {
-      // Filtered by pool id SERVER-SIDE. Dropping this filter to share one
-      // scan across every coin looked like a saving and was the opposite: it
-      // pulls every pool's swaps on Arc into each 5,000-block window, and the
-      // RPC answers "Request exceeds defined limit" once the response is big
-      // enough. Narrowing here is what keeps the response small.
-      const logs = await getLogsChunked(client as PublicClient, {
-        address: addr.poolManager,
-        event: swapEvent,
-        eventArgs: { id: poolId! },
-      });
+  const trades = useTrades();
+  void quoteIsCurrency0; // the hook's amounts are already quote-denominated
 
-      const points = logs
-        .map((l) => {
-          const a = (l as unknown as {
-            args: { sqrtPriceX96: bigint; amount0: bigint; amount1: bigint };
-          }).args;
-          // amount0 is the quote side, signed from the pool's perspective.
-          const q = quoteIsCurrency0 ? a.amount0 : a.amount1;
-          return {
-            block: l.blockNumber!,
-            price: priceFromSqrtX96(a.sqrtPriceX96, quoteIsCurrency0),
-            volumeQuote: q < 0n ? -q : q,
-          };
-        })
-        .filter((p) => p.price > 0)
-        .sort((x, y) => Number(x.block - y.block));
+  const data: PricePoint[] | undefined = useMemo(() => {
+    if (!trades.data || !poolId) return undefined;
+    return trades.data
+      .filter((t) => t.poolId === poolId && t.coins > 0n && t.quoteAmount > 0n)
+      .sort((a, b) => Number(a.block - b.block))
+      .map((t) => ({
+        block: t.block,
+        // Both sides are 18dp, so the ratio is already USDC per whole coin.
+        price: Number(t.quoteAmount) / Number(t.coins),
+        volumeQuote: t.quoteAmount,
+        time: t.time,
+      }))
+      .filter((p) => Number.isFinite(p.price) && p.price > 0);
+  }, [trades.data, poolId]);
 
-      // The explorer path already carries each log's block_timestamp, so
-      // only the blocks it could not supply need a getBlock.
-      const fromLog = new Map<string, number>();
-      for (const l of logs) {
-        const t = (l as unknown as { blockTimestamp?: number }).blockTimestamp;
-        if (t !== undefined && l.blockNumber != null) fromLog.set(String(l.blockNumber), t);
-      }
-      const missing = points.map((p) => p.block).filter((b) => !fromLog.has(String(b)));
-      const times = missing.length
-        ? await blockTimes(client as PublicClient, missing)
-        : new Map<string, number>();
-      return points.map((p) => ({
-        ...p,
-        time: fromLog.get(String(p.block)) ?? times.get(String(p.block)),
-      }));
-    },
-  });
+  return {
+    data,
+    isLoading: trades.isPending,
+    error: trades.error,
+  };
 }
 
 // ------------------------------------------------------------ coin stats
