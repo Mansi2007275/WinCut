@@ -1,5 +1,5 @@
 import { defineChain, type Address } from "viem";
-import { createConfig, http } from "wagmi";
+import { createConfig, fallback, http } from "wagmi";
 import { injected } from "wagmi/connectors";
 import deployed from "@/config/deployed.json";
 
@@ -24,12 +24,34 @@ export const arc = defineChain({
  * Batching collapses the many eth_calls a screen makes into a few HTTP
  * requests, and the retries ride out a limiter that briefly says no.
  */
-export const arcTransport = http(deployed.rpcUrl, {
+const httpOpts = {
   batch: { batchSize: 20, wait: 16 },
   retryCount: 5,
   retryDelay: 250,
   timeout: 20_000,
-});
+} as const;
+
+/**
+ * Arc's public RPC sits behind a rate limiter that refuses a browser doing
+ * ordinary log scans -- it answers -32005 for minutes at a time, which showed
+ * up as the over-limit warning vanishing and market cap stuck on a dash.
+ *
+ * `fallback` keeps the documented endpoint first and moves to another node
+ * serving the same chain when it refuses, instead of surfacing the limit as a
+ * broken screen. `rank: false` means it only moves on failure rather than
+ * continuously probing, which would add the very traffic being throttled.
+ */
+const endpoints: string[] = [
+  deployed.rpcUrl,
+  ...(((deployed as { fallbackRpcUrls?: string[] }).fallbackRpcUrls ?? []).filter(
+    (u) => u !== deployed.rpcUrl,
+  )),
+];
+
+export const arcTransport = fallback(
+  endpoints.map((url) => http(url, httpOpts)),
+  { rank: false, retryCount: 2 },
+);
 
 export const wagmiConfig = createConfig({
   chains: [arc],

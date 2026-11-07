@@ -18,9 +18,16 @@
     "decimals": 18,
     "isNative": true
   },
-  "pool": { "fee": 3000, "tickSpacing": 60 },
+  "pool": {
+    "fee": 3000,
+    "tickSpacing": 60
+  },
   "treasury": "0x71aEE14669EaF0a2f55b783Eed64Ad12B66177ee",
   "owner": "0x71aEE14669EaF0a2f55b783Eed64Ad12B66177ee",
   "generatedAt": "2026-11-06T15:21:31Z",
-  "deployedAtBlock": 71048907
+  "deployedAtBlock": 71048907,
+  "fallbackRpcUrls": [
+    "https://rpc.drpc.testnet.arc.io",
+    "https://rpc.testnet.arc.io"
+  ]
 }
