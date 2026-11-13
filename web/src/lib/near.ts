@@ -32,6 +32,22 @@ export const TOKEN_IDS = (process.env.NEXT_PUBLIC_TOKENS ?? "")
 export const isDeployed = CONTRACT_ID.length > 0;
 
 /**
+ * GeckoTerminal indexes NEAR mainnet only. On testnet there are no candles, no
+ * 24h volume and no swap pressure for any pool - not because a pool is quiet,
+ * but because the source does not cover the network at all.
+ *
+ * The difference matters on screen. "This pool has not traded enough yet" and
+ * "this data source does not exist here" look identical when both render as an
+ * empty panel, and only one of them is true at a time. Screens check this so
+ * they can give the real reason instead of the plausible one.
+ */
+export const CHARTS_AVAILABLE = NETWORK === "mainnet";
+
+/** Why the GeckoTerminal-sourced panels are empty when they cannot work at all. */
+export const NO_CHARTS_REASON =
+  "GeckoTerminal indexes NEAR mainnet only, so there are no candles, no 24h volume and no swap pressure on testnet. Price, pool depth and everything read from the WinCut contract come from the chain directly and are unaffected.";
+
+/**
  * Read endpoints, tried in order. One refusing - a rate limit, a node behind,
  * a transient 502 - moves to the next rather than surfacing as a dead screen.
  * FastNEAR's free tier throttles a browser doing real polling, which is why

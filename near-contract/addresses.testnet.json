@@ -1,0 +1,101 @@
+{
+  "_comment": "Every id, pool and decimal below was read from NEAR testnet by RPC view call and proven with a live get_return quote (see scripts/verify-testnet.mjs). Nothing here is from memory. This file exists so the contract can be exercised end to end for free; mainnet remains the real target and lives in addresses.near.json.",
+  "network": "testnet",
+  "chain_id": "testnet",
+  "verified_at": "2026-11-13T12:29:39Z",
+  "verified_at_block": 277510046,
+  "rpc_used": "https://test.rpc.fastnear.com",
+  "dex": {
+    "name": "Ref Finance (testnet deployment)",
+    "contract_id": "ref-finance-101.testnet",
+    "verified": true,
+    "number_of_pools": 2961,
+    "note": "Testnet has no Rhea-branded deployment; ref-finance-101.testnet is the live testnet exchange. Only SIMPLE_POOL pools are used - the contract's routing assumes the classic AMM, and testnet's DEGEN_SWAP pools panic with 'E129: Degens expired' on any quote."
+  },
+  "usdc": {
+    "token_id": "thusdc.testnet",
+    "symbol": "USDC",
+    "decimals": 6,
+    "note": "Chosen because it is the deepest 6-decimal USDC on a classic wrap.testnet pool that actually quotes. Six decimals matters: the contract pins USDC_DECIMALS = 6, so a 24-decimal testnet USDC (usdc.itachicara.testnet) would need a code change. Passed to `new` as usdc_id, which is an Option - no rebuild needed."
+  },
+  "wnear": {
+    "token_id": "wrap.testnet",
+    "symbol": "wNEAR",
+    "decimals": 24
+  },
+  "routing_note": "Same shape as mainnet: one USDC/wNEAR hub pool (#2082), and every other token quoted against wNEAR so buys and sells route USDC -> wNEAR -> token as one two-hop swap. Hop pool ids below were each confirmed to hold the pair, to hold liquidity on both sides, and to return a non-zero get_return quote for $100.",
+  "charts_note": "GeckoTerminal indexes mainnet only, so there is no gecko_terminal_pool for any testnet pool. Candles, 24h volume and swap pressure are unavailable on testnet and the UI will say so. Prices, pool depth, price impact and every contract-sourced number still work.",
+  "tokens": [
+    {
+      "token_id": "wrap.testnet",
+      "symbol": "wNEAR",
+      "decimals": 24,
+      "gecko_terminal_pool": null,
+      "route_from_usdc": [
+        { "pool_id": 2082, "token_in": "thusdc.testnet", "token_out": "wrap.testnet" }
+      ],
+      "pool_fee_bps": 60,
+      "quote_100_usdc": "0.92004515 wNEAR"
+    },
+    {
+      "token_id": "lnc.factory.tokenhub.testnet",
+      "symbol": "LNC",
+      "decimals": 18,
+      "gecko_terminal_pool": null,
+      "route_from_usdc": [
+        { "pool_id": 2082, "token_in": "thusdc.testnet", "token_out": "wrap.testnet" },
+        { "pool_id": 395, "token_in": "wrap.testnet", "token_out": "lnc.factory.tokenhub.testnet" }
+      ],
+      "pool_fee_bps": 30,
+      "quote_100_usdc": "2.5497214 LNC"
+    },
+    {
+      "token_id": "token.pembrock.testnet",
+      "symbol": "PEM",
+      "decimals": 18,
+      "gecko_terminal_pool": null,
+      "route_from_usdc": [
+        { "pool_id": 2082, "token_in": "thusdc.testnet", "token_out": "wrap.testnet" },
+        { "pool_id": 461, "token_in": "wrap.testnet", "token_out": "token.pembrock.testnet" }
+      ],
+      "pool_fee_bps": 30,
+      "quote_100_usdc": "30.193954 PEM"
+    },
+    {
+      "token_id": "phoenix-bonds.testnet",
+      "symbol": "pNEAR",
+      "decimals": 24,
+      "gecko_terminal_pool": null,
+      "route_from_usdc": [
+        { "pool_id": 2082, "token_in": "thusdc.testnet", "token_out": "wrap.testnet" },
+        { "pool_id": 1807, "token_in": "wrap.testnet", "token_out": "phoenix-bonds.testnet" }
+      ],
+      "pool_fee_bps": 30,
+      "quote_100_usdc": "0.20612687 pNEAR"
+    },
+    {
+      "token_id": "mev-33.factory.v9.meme-cooking.testnet",
+      "symbol": "MEV",
+      "decimals": 18,
+      "gecko_terminal_pool": null,
+      "route_from_usdc": [
+        { "pool_id": 2082, "token_in": "thusdc.testnet", "token_out": "wrap.testnet" },
+        { "pool_id": 2131, "token_in": "wrap.testnet", "token_out": "mev-33.factory.v9.meme-cooking.testnet" }
+      ],
+      "pool_fee_bps": 10,
+      "quote_100_usdc": "145065.65 MEV"
+    },
+    {
+      "token_id": "shit1.gf-bignumbers.testnet",
+      "symbol": "SHIT1",
+      "decimals": 24,
+      "gecko_terminal_pool": null,
+      "route_from_usdc": [
+        { "pool_id": 2082, "token_in": "thusdc.testnet", "token_out": "wrap.testnet" },
+        { "pool_id": 2453, "token_in": "wrap.testnet", "token_out": "shit1.gf-bignumbers.testnet" }
+      ],
+      "pool_fee_bps": 25,
+      "quote_100_usdc": "165670.81 SHIT1"
+    }
+  ]
+}

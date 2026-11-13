@@ -35,7 +35,7 @@ import type { Candle, GtSide, TimeframeKey } from "@/lib/gecko";
 import { TIMEFRAME_KEYS } from "@/lib/gecko";
 import type { Trade } from "@/lib/contract";
 import { price as fmtPrice, pct, toNumber, usdCompact } from "@/lib/format";
-import { USDC_DECIMALS } from "@/lib/near";
+import { CHARTS_AVAILABLE, NO_CHARTS_REASON, USDC_DECIMALS } from "@/lib/near";
 import { Card, Segmented, Skeleton } from "./ui";
 
 /** Matches globals.css. Kept in sync by hand because the chart is a canvas. */
@@ -315,9 +315,16 @@ export function PriceChart({
       <div className="relative">
         <div ref={holder} className="h-[340px] w-full sm:h-[420px]" />
 
-        {(loading || error || (!candles?.length && side)) && (
+        {(loading || error || !CHARTS_AVAILABLE || (!candles?.length && side)) && (
           <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-bg/70">
-            {error ? (
+            {!CHARTS_AVAILABLE ? (
+              <div className="pointer-events-auto max-w-xs px-4 text-center">
+                <p className="text-xs font-semibold text-secondary">No candles on testnet</p>
+                <p className="mt-1 text-[11px] leading-relaxed text-secondary">
+                  {NO_CHARTS_REASON}
+                </p>
+              </div>
+            ) : error ? (
               <div className="pointer-events-auto max-w-xs px-4 text-center">
                 <p className="text-xs font-semibold text-loss">No candles right now</p>
                 <p className="mt-1 text-[11px] leading-relaxed text-secondary">{error}</p>

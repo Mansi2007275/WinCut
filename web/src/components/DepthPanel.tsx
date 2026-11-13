@@ -18,6 +18,7 @@ import type { PoolTrade } from "@/lib/gecko";
 import type { Route } from "@/lib/queries";
 import { depthLadder, type DepthRung } from "@/lib/rhea";
 import { price as fmtPrice, usdCompact } from "@/lib/format";
+import { CHARTS_AVAILABLE, NO_CHARTS_REASON } from "@/lib/near";
 import { Card, SectionHeading, Skeleton } from "./ui";
 
 export function DepthPanel({
@@ -197,11 +198,17 @@ function Pressure({
           Pressure
         </p>
         <p className="text-[10px] text-secondary">
-          {totals ? `last ${totals.count} swaps` : "no recent swaps"}
+          {totals
+            ? `last ${totals.count} swaps`
+            : CHARTS_AVAILABLE
+              ? "no recent swaps"
+              : "not available on testnet"}
         </p>
       </div>
 
-      {!totals ? (
+      {!CHARTS_AVAILABLE ? (
+        <p className="mt-1.5 text-[11px] leading-relaxed text-secondary">{NO_CHARTS_REASON}</p>
+      ) : !totals ? (
         <p className="mt-1.5 text-[11px] leading-relaxed text-secondary">
           GeckoTerminal has not indexed any recent swaps on this pool. It is quiet, not broken.
         </p>
