@@ -16,6 +16,7 @@ import Link from "next/link";
 import { Page } from "@/components/Shell";
 import { ConnectCta, ContractNote, NeedsContract } from "@/components/Gate";
 import { TradeList } from "@/components/TradeTabs";
+import { BridgeDeposit } from "@/components/BridgeDeposit";
 import { Card, Empty, Loading, SectionHeading, SkeletonRows, StatTile } from "@/components/ui";
 import { useToast } from "@/components/Toast";
 import {
@@ -122,6 +123,8 @@ export default function MePage() {
         wallet={walletUsdc.data ?? 0n}
         claimable={claimable.data ?? 0n}
       />
+
+      <BridgeDeposit />
 
       <section className="flex flex-col gap-2">
         <SectionHeading>Open positions</SectionHeading>

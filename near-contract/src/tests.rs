@@ -918,3 +918,65 @@ fn the_lock_kind_is_reported_distinctly_for_payouts_and_swaps() {
     let _ = c.buy(token(), U128(10 * USDC), U128(0), None, None);
     assert_eq!(c.lock.as_ref().unwrap().kind, LockKind::Buy);
 }
+
+// ------------------------------------------------- bridged (1Click) deposits
+
+#[test]
+fn a_bridged_deposit_credits_the_named_beneficiary_not_the_relayer() {
+    // A NEAR Intents 1Click swap settles from a solver account, so without
+    // `deposit_for` the user's bridged USDC would land in the solver's balance.
+    let mut c = setup();
+    let solver: AccountId = "intents-solver.near".parse().unwrap();
+
+    as_user(&usdc(), 0, 100);
+    let left = c.ft_on_transfer(
+        solver.clone(),
+        U128(250 * USDC),
+        r#"{"deposit_for":"alice.near"}"#.to_string(),
+    );
+    match left {
+        near_sdk::PromiseOrValue::Value(v) => assert_eq!(v.0, 0, "the deposit is accepted"),
+        _ => panic!("expected a value"),
+    }
+
+    assert_eq!(c.get_balance(alice()).0, 250 * USDC, "credited to the named account");
+    assert_eq!(c.get_balance(solver).0, 0, "and not to the relayer");
+    assert_eq!(c.get_usdc_accounted().0, 250 * USDC);
+}
+
+#[test]
+fn a_bridged_deposit_can_be_spent_like_any_other() {
+    let mut c = setup();
+    as_user(&usdc(), 0, 100);
+    let _ = c.ft_on_transfer(
+        "intents-solver.near".parse().unwrap(),
+        U128(500 * USDC),
+        r#"{"deposit_for":"alice.near"}"#.to_string(),
+    );
+    do_buy(&mut c, &alice(), 100 * USDC, 1000 * TOK, None, None);
+    assert_eq!(c.get_position(alice(), token()).unwrap().cost_basis_usdc.0, 100 * USDC);
+}
+
+#[test]
+fn a_malformed_deposit_msg_is_refunded_rather_than_credited_to_a_guess() {
+    let mut c = setup();
+    for msg in [
+        r#"{"deposit_for":"NOT A VALID ACCOUNT"}"#,
+        r#"{"deposit_for":"alice.near","extra":1}"#,
+        r#"{"depositFor":"alice.near"}"#,
+        "deposit_for alice.near",
+        "{}",
+    ] {
+        as_user(&usdc(), 0, 100);
+        let left = c.ft_on_transfer(bob(), U128(10 * USDC), msg.to_string());
+        match left {
+            near_sdk::PromiseOrValue::Value(v) => {
+                assert_eq!(v.0, 10 * USDC, "msg {msg} should be refunded in full")
+            }
+            _ => panic!("expected a value"),
+        }
+    }
+    assert_eq!(c.get_balance(alice()).0, 0);
+    assert_eq!(c.get_balance(bob()).0, 0);
+    assert_eq!(c.get_usdc_accounted().0, 0, "nothing was credited anywhere");
+}

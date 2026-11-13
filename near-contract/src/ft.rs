@@ -8,10 +8,22 @@ use near_sdk::{env, near, require, AccountId, PromiseError, PromiseOrValue};
 
 #[near]
 impl WinCut {
-    /// NEP-141 receiver. USDC sent here with `msg` of `deposit` (or empty)
-    /// lands in the sender's internal balance. Anything else is handed back by
-    /// returning the full amount, so a stray token can never pollute the
-    /// balance measurements that settle trades.
+    /// NEP-141 receiver.
+    ///
+    /// `msg` may be:
+    ///
+    /// * `deposit`, or empty - credit the sender
+    /// * `{"deposit_for":"alice.near"}` - credit somebody else
+    ///
+    /// The second form exists for bridged deposits. A NEAR Intents 1Click swap
+    /// settles by transferring from its own solver account, so crediting the
+    /// sender would hand a user's bridged USDC to the solver. Letting the
+    /// sender nominate the beneficiary is safe: they are giving the money away
+    /// either way, and they are the only one who can say to whom.
+    ///
+    /// Anything else is handed straight back by returning the full amount, so
+    /// a stray token can never pollute the balance measurements that settle
+    /// trades.
     pub fn ft_on_transfer(
         &mut self,
         sender_id: AccountId,
@@ -23,18 +35,25 @@ impl WinCut {
             env::log_str("refused: WinCut only accepts USDC deposits");
             return PromiseOrValue::Value(amount);
         }
-        if !(msg.is_empty() || msg == "deposit") {
-            env::log_str("refused: unrecognised msg, expected \"deposit\"");
-            return PromiseOrValue::Value(amount);
-        }
         if self.paused {
             env::log_str("refused: WinCut is paused");
             return PromiseOrValue::Value(amount);
         }
+
+        let beneficiary = match parse_deposit_msg(&msg) {
+            Some(DepositMsg::Sender) => sender_id,
+            Some(DepositMsg::For(account)) => account,
+            None => {
+                env::log_str(
+                    "refused: expected \"deposit\" or {\"deposit_for\":\"<account>\"}",
+                );
+                return PromiseOrValue::Value(amount);
+            }
+        };
         require!(amount.0 > 0, "nothing to deposit");
 
-        self.credit_balance(&sender_id, amount.0);
-        events::deposit(&sender_id, amount.0, self.balance_of_internal(&sender_id));
+        self.credit_balance(&beneficiary, amount.0);
+        events::deposit(&beneficiary, amount.0, self.balance_of_internal(&beneficiary));
         PromiseOrValue::Value(U128(0))
     }
 
@@ -160,4 +179,32 @@ impl WinCut {
             None => {}
         }
     }
+}
+
+/// What a `ft_on_transfer` msg asks for.
+pub enum DepositMsg {
+    /// Credit whoever sent the tokens.
+    Sender,
+    /// Credit the named account, for a bridged deposit the sender is relaying.
+    For(AccountId),
+}
+
+/// Parses the deposit msg, returning `None` for anything unrecognised.
+///
+/// Unrecognised is refused rather than guessed at: the alternative to a clear
+/// refusal is crediting the wrong account, and the tokens are already here by
+/// the time this runs.
+pub fn parse_deposit_msg(msg: &str) -> Option<DepositMsg> {
+    let trimmed = msg.trim();
+    if trimmed.is_empty() || trimmed == "deposit" {
+        return Some(DepositMsg::Sender);
+    }
+    #[derive(near_sdk::serde::Deserialize)]
+    #[serde(crate = "near_sdk::serde", deny_unknown_fields)]
+    struct ForMsg {
+        deposit_for: AccountId,
+    }
+    near_sdk::serde_json::from_str::<ForMsg>(trimmed)
+        .ok()
+        .map(|m| DepositMsg::For(m.deposit_for))
 }
