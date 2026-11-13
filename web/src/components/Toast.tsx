@@ -10,7 +10,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { explorerTx } from "@/lib/chain";
+import { EXPLORER_NAME, explorerTx } from "@/lib/explorer";
 
 type Kind = "pending" | "confirmed" | "failed" | "info";
 
@@ -116,7 +116,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
                       rel="noreferrer"
                       className="mt-1 inline-block text-[11px] text-accent underline underline-offset-2"
                     >
-                      view on explorer ↗
+                      {`view on ${EXPLORER_NAME} ↗`}
                     </a>
                   )}
                 </div>

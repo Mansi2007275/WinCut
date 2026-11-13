@@ -1,193 +1,121 @@
 "use client";
 
-import { useMemo, useState } from "react";
+/**
+ * The leaderboard, ranked by realised profit.
+ *
+ * Realised, not open: a paper gain on an untouched position is not a result,
+ * and ranking by it would reward holding rather than trading. Everything here
+ * comes from the contract's own per-trader stats, which are written in the
+ * settlement callback.
+ */
+
 import Link from "next/link";
-import { AnimatePresence, motion } from "framer-motion";
+
 import { Page } from "@/components/Shell";
-import {
-  Avatar,
-  Badge,
-  Card,
-  ColumnHeader,
-  DumperStamp,
-  Empty,
-  ErrorBox,
-  HonestyBar,
-  Segmented,
-  SkeletonRows,
-} from "@/components/ui";
-import { useLeaderboard, type LeaderRow } from "@/lib/data";
-import { isDeployed } from "@/lib/chain";
-import { short, usd } from "@/lib/format";
-
-type BoardTab = "own" | "followers";
-
-const TABS = [
-  { id: "own" as const, label: "Own profit" },
-  { id: "followers" as const, label: "Followers' profit" },
-];
+import { LeaderboardList, TradeList } from "@/components/TradeTabs";
+import { Card, Empty, SectionHeading, SkeletonRows, StatTile } from "@/components/ui";
+import { NeedsContract } from "@/components/Gate";
+import { useConfig, useLeaderboard, useRecentTrades } from "@/lib/queries";
+import { isDeployed } from "@/lib/near";
+import { usd } from "@/lib/format";
 
 export default function BoardPage() {
-  const [tab, setTab] = useState<BoardTab>("own");
-  const { rows, isLoading, error } = useLeaderboard();
+  const board = useLeaderboard(50);
+  const trades = useRecentTrades(60);
+  const config = useConfig();
 
-  const sorted = useMemo(
-    () =>
-      rows
-        ? [...rows].sort((a, b) =>
-            tab === "own" ? Number(b.ownPnl - a.ownPnl) : Number(b.followersPnl - a.followersPnl),
-          )
-        : undefined,
-    [rows, tab],
-  );
-
-  const dumpers = (rows ?? []).filter((r) => r.isDumper);
+  const totals = (() => {
+    const list = trades.data ?? [];
+    const sells = list.filter((t) => t.side === "Sell");
+    const fees = sells.reduce((a, t) => a + BigInt(t.fee), 0n);
+    const free = sells.filter((t) => BigInt(t.fee) === 0n).length;
+    return { sells: sells.length, fees, free };
+  })();
 
   return (
-    <Page>
+    <Page width="lg">
       <header>
-        <h1 className="text-2xl font-semibold">Leaderboard</h1>
-        <p className="mt-1.5 text-sm leading-snug text-secondary">
-          Ranked by what followers actually made, from WinCut hook events on chain. No indexer,
-          nothing seeded.
+        <h1 className="text-lg font-semibold">Traders</h1>
+        <p className="mt-1 text-[11px] leading-relaxed text-secondary">
+          Ranked by realised profit. Copy one from any trade screen and they earn 50% of the fee
+          on your winning exits - and nothing on the rest.
         </p>
       </header>
 
-      <Segmented options={TABS} value={tab} onChange={setTab} />
-
-      {tab === "followers" && (
-        <Card tone="accent" className="p-3">
-          <p className="text-[12px] leading-snug text-text/85">
-            This is the board that matters. A trader can look great on their own profit while the
-            people copying them lose money. Under WinCut they earn nothing from those followers.
-          </p>
-        </Card>
-      )}
-
-      {isLoading && <SkeletonRows rows={3} height="h-24" />}
-      {error && <ErrorBox title="Cannot read events" detail={String(error)} />}
-
-      {isDeployed && sorted && sorted.length === 0 && (
-        <Empty
-          title="No trades yet. Be the first."
-          hint="Every row on this board comes from a real exit on Arc testnet. Until someone closes a position there is genuinely nothing to rank."
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <StatTile
+          label="Trades settled"
+          value={config.data ? String(config.data.total_trades) : "…"}
+          sub="all time, on chain"
         />
-      )}
+        <StatTile
+          label="Recent sells"
+          value={trades.data ? String(totals.sells) : "…"}
+          sub={`of the last ${trades.data?.length ?? 0} trades`}
+        />
+        <StatTile
+          label="Charged nothing"
+          tone="profit"
+          value={trades.data ? String(totals.free) : "…"}
+          sub="losing or sheltered sells"
+        />
+        <StatTile
+          label="Fees on those"
+          value={trades.data ? usd(totals.fees) : "…"}
+          sub="10% of profit only"
+        />
+      </div>
 
-      {sorted && sorted.length > 0 && (
-        <>
-          <ColumnHeader>
-            <span>Trader</span>
-            <span>{tab === "own" ? "Own profit" : "Followers"}</span>
-          </ColumnHeader>
-          <div className="flex flex-col gap-2">
-            <AnimatePresence initial={false}>
-              {sorted.map((r, i) => (
-                <motion.div
-                  key={r.trader}
-                  layout
-                  initial={{ opacity: 0, y: 6 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0 }}
-                  transition={{ duration: 0.2, layout: { duration: 0.28 } }}
-                >
-                  <RowCard row={r} rank={i + 1} tab={tab} />
-                </motion.div>
-              ))}
-            </AnimatePresence>
-          </div>
-        </>
-      )}
+      <section className="flex flex-col gap-2">
+        <SectionHeading>Leaderboard</SectionHeading>
+        {!isDeployed ? (
+          <NeedsContract what="the leaderboard" />
+        ) : board.isPending ? (
+          <SkeletonRows rows={6} height="h-14" />
+        ) : board.isError ? (
+          <Card tone="loss" className="p-3">
+            <p className="text-xs font-semibold text-loss">Could not read the contract</p>
+            <p className="mt-1 text-[11px] break-words text-secondary">
+              {(board.error as Error).message}
+            </p>
+          </Card>
+        ) : !board.data?.length ? (
+          <Empty
+            title="Nobody has closed a position yet"
+            hint="The board fills from realised results, so it stays empty until the first sell settles."
+          />
+        ) : (
+          <Card className="px-3 py-1">
+            <LeaderboardList rows={board.data} />
+          </Card>
+        )}
+      </section>
 
-      {/* The dumper explainer stays visible even with nobody flagged: it is
-          the rule the second board exists to enforce, and saying it only once
-          somebody is caught would make it read as an accusation. */}
-      {sorted && sorted.length > 0 && (
-        <Card className="p-4">
-          <p className="flex items-center gap-2 text-sm font-semibold">
-            <DumperStamp />
-            {dumpers.length === 0
-              ? "No dumpers yet"
-              : `${dumpers.length} dumper${dumpers.length === 1 ? "" : "s"} flagged`}
-          </p>
-          <p className="mt-1.5 text-[12px] leading-snug text-secondary">
-            A trader is flagged when their own profit is positive while the people copying them
-            lose. They earn nothing from those followers.
-          </p>
-        </Card>
-      )}
-
-      {sorted && sorted.length > 0 && (
-        <Card className="p-4">
-          <div className="flex items-baseline justify-between gap-2">
-            <span className="text-sm font-semibold">Honesty score</span>
-            <span className="text-[11px] text-secondary">followers&apos; profit ÷ own profit</span>
-          </div>
-          <div className="mt-2.5 h-1.5 w-full rounded-pill bg-gradient-to-r from-loss via-secondary to-profit" />
-          <div className="mt-1.5 flex justify-between text-[10px] text-secondary">
-            <span>Dumped on followers</span>
-            <span>Neutral</span>
-            <span>Followers won</span>
-          </div>
-        </Card>
-      )}
+      <section className="flex flex-col gap-2">
+        <SectionHeading
+          right={
+            <Link href="/trade" className="text-[11px] text-accent hover:underline">
+              markets →
+            </Link>
+          }
+        >
+          Everything WinCut has settled
+        </SectionHeading>
+        {!isDeployed ? (
+          <NeedsContract what="settled trades" />
+        ) : trades.isPending ? (
+          <SkeletonRows rows={5} height="h-12" />
+        ) : !trades.data?.length ? (
+          <Empty
+            title="No trades yet"
+            hint="The contract keeps the last 500 on chain; older ones stay in the NEP-297 event log."
+          />
+        ) : (
+          <Card className="px-3 py-1">
+            <TradeList trades={trades.data} showWho />
+          </Card>
+        )}
+      </section>
     </Page>
-  );
-}
-
-function RowCard({ row, rank, tab }: { row: LeaderRow; rank: number; tab: BoardTab }) {
-  const primary = tab === "own" ? row.ownPnl : row.followersPnl;
-  const honest = !row.isDumper && row.followers > 0 && row.followersPnl > 0n;
-
-  return (
-    <Link href={`/trader/${row.trader}`}>
-      <Card
-        tone={row.isDumper && tab === "followers" ? "loss" : "surface"}
-        className="p-3 transition-colors hover:bg-elevated/40"
-      >
-        <div className="flex items-center gap-3">
-          <span className="num w-4 shrink-0 text-center text-xs text-secondary">{rank}</span>
-          <Avatar address={row.trader} size={34} />
-          <div className="min-w-0 flex-1">
-            <p className="flex flex-wrap items-center gap-1.5">
-              {/* Addresses, not invented handles. A made-up name implies the
-                  app knows who this is, which it does not. */}
-              <span className="num text-sm font-semibold">{short(row.trader)}</span>
-              {row.isDumper && <DumperStamp />}
-              {honest && <Badge tone="profit">Honest</Badge>}
-            </p>
-            <p className="num mt-0.5 truncate text-[11px] text-secondary">
-              {row.followers} follower{row.followers === 1 ? "" : "s"} · own{" "}
-              {usd(row.ownPnl, { sign: true })}
-              {row.trades > 0 && (
-                <> · win rate {Math.round((row.wins / row.trades) * 100)}%</>
-              )}
-            </p>
-          </div>
-          <div className="shrink-0 text-right">
-            <p
-              className={`num text-sm font-semibold ${
-                primary > 0n ? "text-profit" : primary < 0n ? "text-loss" : "text-text"
-              }`}
-            >
-              {usd(primary, { sign: true })}
-            </p>
-            <p className="text-[10px] text-secondary">
-              {tab === "own" ? "own profit" : "followers"}
-            </p>
-          </div>
-        </div>
-
-        <div className="mt-2.5">
-          <div className="mb-1 flex items-baseline justify-between">
-            <span className="text-[10px] tracking-wide text-secondary uppercase">Honesty</span>
-            <span className="num text-[11px] text-secondary">
-              {row.honesty === null ? "—" : row.honesty.toFixed(2)}
-            </span>
-          </div>
-          <HonestyBar score={row.honesty} />
-        </div>
-      </Card>
-    </Link>
   );
 }

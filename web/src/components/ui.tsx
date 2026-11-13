@@ -2,9 +2,9 @@
 
 import NumberFlow from "@number-flow/react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { formatUnits } from "viem";
-import { explorerAddr, explorerTx, QUOTE } from "@/lib/chain";
-import { short, shorter } from "@/lib/format";
+import { EXPLORER_NAME, explorerAccount, explorerTx } from "@/lib/explorer";
+import { shortAccount, toNumber } from "@/lib/format";
+import { USDC_DECIMALS } from "@/lib/near";
 
 /* ---------------------------------------------------------------- surfaces */
 
@@ -278,34 +278,6 @@ export function Badge({
   );
 }
 
-export function DumperStamp() {
-  return <Badge tone="loss">Dumper</Badge>;
-}
-
-/**
- * Honesty = followers' PnL relative to the trader's own.
- *
- * The scale runs -1 (dumped on followers) through 0 (neutral) to 2 (followers
- * won bigger than the trader). A null score means there is nothing to divide
- * yet, which is drawn as an empty track rather than a misleading zero.
- */
-export function HonestyBar({ score }: { score: number | null }) {
-  if (score === null) {
-    return <div className="h-1.5 w-full rounded-pill bg-elevated" />;
-  }
-  const clamped = Math.max(-1, Math.min(2, score));
-  const fill = ((clamped + 1) / 3) * 100;
-  const tone = score < 0 ? "bg-loss" : score < 0.5 ? "bg-secondary" : "bg-profit";
-  return (
-    <div className="h-1.5 w-full overflow-hidden rounded-pill bg-elevated">
-      <div
-        className={`h-full rounded-pill transition-[width] duration-300 ${tone}`}
-        style={{ width: `${fill}%` }}
-      />
-    </div>
-  );
-}
-
 export function TxState({
   status,
   hash,
@@ -343,12 +315,12 @@ export function TxState({
 /* ----------------------------------------------------------------- avatars */
 
 /**
- * An avatar derived from the address itself.
+ * An avatar derived from the account id itself.
  *
- * Two characters of the address over a hue picked from its own bytes, so the
- * same wallet is always the same colour. Deliberately NOT a generated human
- * name: an invented handle makes a stranger's wallet look like an account the
- * app knows something about, which is a claim the app cannot back.
+ * Two characters of the id over a hue hashed from the whole of it, so the same
+ * account is always the same colour. Deliberately NOT a generated human name:
+ * an invented handle makes a stranger's account look like something the app
+ * knows about, which is a claim it cannot back.
  */
 export function Avatar({
   address,
@@ -359,11 +331,12 @@ export function Avatar({
   size?: number;
   className?: string;
 }) {
-  const clean = (address ?? "").replace(/^0x/, "");
+  const clean = (address ?? "").replace(/\.near$/, "");
   const initials = clean.slice(0, 2).toUpperCase() || "··";
-  // Hue from the trailing bytes, which vary more than the leading ones.
-  const seed = parseInt(clean.slice(-6) || "0", 16);
-  const hue = Number.isFinite(seed) ? seed % 360 : 210;
+  // Hue from a sum over the whole id, so `alice.near` and `alex.near` differ.
+  let seed = 0;
+  for (const ch of address ?? "") seed = (seed * 31 + ch.charCodeAt(0)) % 100_000;
+  const hue = seed % 360;
   return (
     <span
       aria-hidden
@@ -384,11 +357,10 @@ export function Avatar({
 /* ----------------------------------------------------------------- linking */
 
 /**
- * An address, always linked to the explorer.
+ * An account id, always linked to NearBlocks.
  *
- * There are no display names in WinCut. A short address that opens the
- * explorer is the honest form, and it is also the form a judge can verify
- * mid-demo.
+ * There are no display names in WinCut. A NEAR account id already reads as a
+ * name, and linking it out is the form a judge can verify mid-demo.
  */
 export function AddressLink({
   address,
@@ -396,7 +368,7 @@ export function AddressLink({
   label,
   className = "",
 }: {
-  address?: string;
+  address?: string | null;
   tight?: boolean;
   label?: string;
   className?: string;
@@ -404,13 +376,13 @@ export function AddressLink({
   if (!address) return <span className="text-secondary">—</span>;
   return (
     <a
-      href={explorerAddr(address)}
+      href={explorerAccount(address)}
       target="_blank"
       rel="noreferrer"
       title={address}
       className={`text-accent underline-offset-2 hover:underline ${className}`}
     >
-      {label ?? (tight ? shorter(address) : short(address))}
+      {label ?? (tight ? shortAccount(address) : address)}
     </a>
   );
 }
@@ -425,7 +397,7 @@ export function TxLink({ hash, children }: { hash?: string; children?: ReactNode
       rel="noreferrer"
       className="text-[11px] text-accent underline-offset-2 hover:underline"
     >
-      {children ?? "view on explorer ↗"}
+      {children ?? `view on ${EXPLORER_NAME} ↗`}
     </a>
   );
 }
@@ -518,8 +490,7 @@ export function Num({
   );
 }
 
-/// The same, for a QUOTE-denominated bigint. Converted through formatUnits so
-/// the decimals always match the deployment's quote currency.
+/// The same, for a raw USDC bigint.
 export function Money({
   value,
   decimals = 2,
@@ -532,7 +503,7 @@ export function Money({
   className?: string;
 }) {
   if (value === undefined) return <span className={`num ${className}`}>—</span>;
-  const n = Number(formatUnits(value, QUOTE.decimals));
+  const n = toNumber(value, USDC_DECIMALS);
   const negative = n < 0;
   return (
     <span className={`num ${className}`}>

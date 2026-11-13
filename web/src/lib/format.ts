@@ -1,140 +1,158 @@
-import { formatUnits } from "viem";
-import { QUOTE } from "./chain";
+/**
+ * Number formatting.
+ *
+ * Everything on chain is a raw integer in its own number of decimals - USDC
+ * has 6, wNEAR 24, LONK 8 - so every function here takes the decimals rather
+ * than assuming. Nothing is ever rendered from a float that came off the wire.
+ */
 
-/// Money, always in QUOTE units (native USDC, 18 decimals on Arc).
-export function usd(v: bigint | undefined, opts?: { decimals?: number; sign?: boolean }): string {
-  if (v === undefined) return "—";
-  const dp = opts?.decimals ?? 2;
+import { USDC_DECIMALS } from "./near";
+
+const EMPTY = "—";
+
+/** Raw units to a JS number, for display and charting only. */
+export function toNumber(raw: bigint | string | undefined, decimals: number): number {
+  if (raw === undefined || raw === null) return NaN;
+  const v = typeof raw === "bigint" ? raw : BigInt(raw || 0);
   const neg = v < 0n;
   const abs = neg ? -v : v;
-  const n = Number(formatUnits(abs, QUOTE.decimals));
-  const body = n.toLocaleString("en-US", { minimumFractionDigits: dp, maximumFractionDigits: dp });
-  const sign = neg ? "-" : opts?.sign ? "+" : "";
+  const base = 10n ** BigInt(decimals);
+  const whole = Number(abs / base);
+  const frac = Number(abs % base) / Number(base);
+  return (neg ? -1 : 1) * (whole + frac);
+}
+
+/** A decimal string to raw units, truncating anything past `decimals`. */
+export function toRaw(input: string, decimals: number): bigint {
+  const trimmed = (input ?? "").trim();
+  if (!trimmed || !/^\d*\.?\d*$/.test(trimmed)) return 0n;
+  const [whole = "0", frac = ""] = trimmed.split(".");
+  const padded = (frac + "0".repeat(decimals)).slice(0, decimals);
+  return BigInt(whole || "0") * 10n ** BigInt(decimals) + BigInt(padded || "0");
+}
+
+/** USDC, as money. */
+export function usd(
+  raw: bigint | string | undefined,
+  opts: { dp?: number; sign?: boolean } = {},
+): string {
+  if (raw === undefined || raw === null) return EMPTY;
+  const n = toNumber(raw, USDC_DECIMALS);
+  if (!Number.isFinite(n)) return EMPTY;
+  return usdFromNumber(n, opts);
+}
+
+export function usdFromNumber(n: number, opts: { dp?: number; sign?: boolean } = {}): string {
+  if (!Number.isFinite(n)) return EMPTY;
+  const dp = opts.dp ?? (Math.abs(n) >= 1 || n === 0 ? 2 : 4);
+  const sign = n < 0 ? "-" : opts.sign ? "+" : "";
+  const body = Math.abs(n).toLocaleString("en-US", {
+    minimumFractionDigits: dp,
+    maximumFractionDigits: dp,
+  });
   return `${sign}$${body}`;
 }
 
-/// Coin amounts: large numbers, so compact them.
-export function coins(v: bigint | undefined, decimals = 18): string {
-  if (v === undefined) return "—";
-  const n = Number(formatUnits(v, decimals));
-  if (n === 0) return "0";
-  if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(2)}B`;
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(2)}K`;
-  // No scientific notation anywhere in the UI, dust amounts included.
-  if (n < 0.0001) return n.toLocaleString("en-US", { maximumFractionDigits: 10 });
-  return n.toLocaleString("en-US", { maximumFractionDigits: 4 });
+/** Big money, compacted: $1.2M. */
+export function usdCompact(n: number | undefined): string {
+  if (n === undefined || !Number.isFinite(n)) return EMPTY;
+  const abs = Math.abs(n);
+  const sign = n < 0 ? "-" : "";
+  if (abs >= 1e9) return `${sign}$${(abs / 1e9).toFixed(2)}B`;
+  if (abs >= 1e6) return `${sign}$${(abs / 1e6).toFixed(2)}M`;
+  if (abs >= 1e3) return `${sign}$${(abs / 1e3).toFixed(1)}K`;
+  return `${sign}$${abs.toFixed(2)}`;
 }
 
-export function pct(numerator: bigint, denominator: bigint, dp = 1): string {
-  if (denominator === 0n) return "—";
-  const v = (Number(numerator) / Number(denominator)) * 100;
-  if (!Number.isFinite(v)) return "—";
-  return `${v >= 0 ? "+" : ""}${v.toFixed(dp)}%`;
-}
-
-export const short = (a?: string) => (a ? `${a.slice(0, 6)}…${a.slice(-4)}` : "—");
-
-/// Tighter form, for table cells at 390px.
-export const shorter = (a?: string) => (a ? `${a.slice(0, 4)}…${a.slice(-3)}` : "—");
-
-/// Relative time for the feed. Arc blocks are ~1s, which is close enough to
-/// read a block delta as seconds without fetching every block's timestamp.
-export function ago(block: bigint, head?: bigint): string {
-  if (head === undefined || head < block) return "now";
-  const s = Number(head - block);
-  if (s < 5) return "now";
-  if (s < 60) return `${s}s ago`;
-  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
-  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
-  return `${Math.floor(s / 86400)}d ago`;
+/** Token amounts. Memecoin balances run to the billions, so they compact. */
+export function tokens(raw: bigint | string | undefined, decimals: number): string {
+  if (raw === undefined || raw === null) return EMPTY;
+  const n = toNumber(raw, decimals);
+  if (!Number.isFinite(n)) return EMPTY;
+  const abs = Math.abs(n);
+  if (abs === 0) return "0";
+  if (abs >= 1e9) return `${(n / 1e9).toFixed(2)}B`;
+  if (abs >= 1e6) return `${(n / 1e6).toFixed(2)}M`;
+  if (abs >= 1e3) return n.toLocaleString("en-US", { maximumFractionDigits: 2 });
+  if (abs >= 1) return n.toFixed(4).replace(/\.?0+$/, "");
+  return n.toFixed(Math.min(decimals, 8)).replace(/\.?0+$/, "");
 }
 
 /**
- * Price of one coin in QUOTE, from the pool's sqrtPriceX96.
- *
- * price = (sqrtPriceX96 / 2^96)^2 gives currency1 per currency0. Native USDC is
- * address(0) so it always sorts to currency0, and both sides carry 18 decimals,
- * so no decimal correction is needed. Returned as a JS number because it only
- * ever feeds a chart axis and a label, never an amount we send on chain.
+ * A token price in USD. Memecoins trade at 1e-9, so a fixed decimal count
+ * either loses the number or pads every other one with zeros. Below 0.001 the
+ * zeros are counted instead: $0.0{8}586 reads as eight zeros then 586.
  */
-export function priceFromSqrtX96(sqrtPriceX96: bigint, quoteIsCurrency0: boolean): number {
-  if (sqrtPriceX96 === 0n) return 0;
-  const r = Number(sqrtPriceX96) / 2 ** 96;
-  const onePerZero = r * r;
-  if (!Number.isFinite(onePerZero) || onePerZero === 0) return 0;
-  // We want QUOTE per coin. When QUOTE is currency0 the coin is currency1, and
-  // the ratio above reads as coins per dollar, so invert it.
-  return quoteIsCurrency0 ? 1 / onePerZero : onePerZero;
+export function price(n: number | undefined): string {
+  if (n === undefined || !Number.isFinite(n) || n === 0) return EMPTY;
+  const abs = Math.abs(n);
+  if (abs >= 1000) return usdFromNumber(n, { dp: 2 });
+  if (abs >= 1) return usdFromNumber(n, { dp: 4 });
+  if (abs >= 0.001) return usdFromNumber(n, { dp: 6 });
+
+  const exp = Math.floor(Math.log10(abs));
+  const zeros = -exp - 1;
+  const digits = Math.round(abs * 10 ** (zeros + 4)).toString().slice(0, 4);
+  return `${n < 0 ? "-" : ""}$0.0{${zeros}}${digits}`;
 }
 
-const SUBSCRIPT_DIGITS = "₀₁₂₃₄₅₆₇₈₉";
-
-/// 8 -> "₈", 11 -> "₁₁".
-function subscript(n: number): string {
-  return String(n)
-    .split("")
-    .map((d) => SUBSCRIPT_DIGITS[Number(d)])
-    .join("");
+/** Percentages, always signed, because a change of 0.00% still has a sign. */
+export function pct(n: number | undefined, dp = 2): string {
+  if (n === undefined || !Number.isFinite(n)) return EMPTY;
+  return `${n > 0 ? "+" : n < 0 ? "-" : ""}${Math.abs(n).toFixed(dp)}%`;
 }
 
-/**
- * Coin prices, which on a freshly launched memecoin are very small numbers.
- *
- * `toExponential` was honest but unreadable: "$7.57e-9" is the kind of thing a
- * person has to stop and decode, and two of them side by side cannot be
- * compared at a glance. The convention every exchange settled on is the
- * subscript-zero form -- $0.0₈757 means "0." then eight zeros then 757 -- which
- * keeps every digit and still reads as a price.
- *
- * Normal prices get 2-4 decimals and no cleverness.
- */
-export function price(v: number): string {
-  if (!Number.isFinite(v) || v === 0) return "—";
-  const neg = v < 0;
-  const a = Math.abs(v);
-  const sign = neg ? "-" : "";
-
-  // The cut-off is a cent, not 0.0001, because 4 decimals cannot carry a price
-  // below that without losing digits: 0.00012345 would render "$0.0001" and
-  // throw away everything that distinguishes it from 0.00010001.
-  if (a >= 0.01) {
-    return `${sign}$${a.toLocaleString("en-US", {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 4,
-    })}`;
-  }
-
-  // Below a cent the leading zeros are the whole story, so count them rather
-  // than print them. Deriving the exponent from toExponential's own output
-  // keeps the rounding consistent: 9.999e-9 becomes 1.00e-8, and the exponent
-  // we read back is the rounded one, not the original.
-  const [mantissa, exponent] = a.toExponential(2).split("e");
-  const zeros = -Number(exponent) - 1;
-  const significant = mantissa.replace(".", "").replace(/0+$/, "") || "0";
-  return `${sign}$0.0${subscript(zeros)}${significant}`;
+/** A NEAR account id, shortened only when it is an implicit (64 hex) one. */
+export function shortAccount(id: string | undefined | null): string {
+  if (!id) return EMPTY;
+  if (/^[0-9a-f]{64}$/.test(id)) return `${id.slice(0, 6)}…${id.slice(-4)}`;
+  if (id.length <= 24) return id;
+  const [name, ...rest] = id.split(".");
+  const suffix = rest.join(".");
+  if (name.length > 14) return `${name.slice(0, 10)}…${suffix ? "." + suffix : ""}`;
+  return id;
 }
 
-/// Percent change between two prices. null when there is nothing to compare to.
-export function changePct(from: number, to: number): number | null {
-  if (!Number.isFinite(from) || !Number.isFinite(to) || from === 0) return null;
-  return ((to - from) / from) * 100;
+const RELATIVE = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
+
+/** A nanosecond block timestamp as "3 minutes ago". */
+export function ago(timestampNs: number | string | undefined): string {
+  if (!timestampNs) return EMPTY;
+  const ms = Number(BigInt(timestampNs) / 1_000_000n);
+  const diff = (ms - Date.now()) / 1000;
+  const abs = Math.abs(diff);
+  if (abs < 60) return RELATIVE.format(Math.round(diff), "second");
+  if (abs < 3600) return RELATIVE.format(Math.round(diff / 60), "minute");
+  if (abs < 86400) return RELATIVE.format(Math.round(diff / 3600), "hour");
+  return RELATIVE.format(Math.round(diff / 86400), "day");
 }
 
-/// Parses a user-typed dollar amount into QUOTE base units.
-export function parseUsd(input: string): bigint {
-  const cleaned = input.replace(/[^0-9.]/g, "");
-  if (!cleaned || cleaned === ".") return 0n;
-  const [whole, frac = ""] = cleaned.split(".");
-  const padded = (frac + "0".repeat(QUOTE.decimals)).slice(0, QUOTE.decimals);
-  try {
-    return BigInt(whole || "0") * 10n ** BigInt(QUOTE.decimals) + BigInt(padded || "0");
-  } catch {
-    return 0n;
-  }
+/** A nanosecond block timestamp as a clock time, for chart markers. */
+export function clock(timestampNs: number | string | undefined): string {
+  if (!timestampNs) return EMPTY;
+  const ms = Number(BigInt(timestampNs) / 1_000_000n);
+  return new Date(ms).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" });
 }
 
-export const BPS = 10_000n;
-/// minOut is derived from netOut, NEVER from the gross quote.
-export const applySlippage = (netOut: bigint, slippageBps: number) =>
-  (netOut * (BPS - BigInt(slippageBps))) / BPS;
+/** Signed USDC as the contract reports it: a flag plus a magnitude. */
+export type SignedUsdc = { negative: boolean; abs: string };
+
+export function signedUsd(v: SignedUsdc | undefined | null, opts: { sign?: boolean } = {}): string {
+  if (!v) return EMPTY;
+  const n = toNumber(v.abs, USDC_DECIMALS) * (v.negative ? -1 : 1);
+  return usdFromNumber(n, { sign: opts.sign ?? true });
+}
+
+export function signedNumber(v: SignedUsdc | undefined | null): number {
+  if (!v) return 0;
+  return toNumber(v.abs, USDC_DECIMALS) * (v.negative ? -1 : 1);
+}
+
+/** Tailwind class for a signal colour: profit, loss, or neither. */
+export function signalClass(n: number): string {
+  if (n > 0) return "text-profit";
+  if (n < 0) return "text-loss";
+  return "text-secondary";
+}
+
+export { EMPTY };

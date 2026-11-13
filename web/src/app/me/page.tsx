@@ -1,349 +1,418 @@
 "use client";
 
+/**
+ * The user's own page: money in, money out, what is open, what is banked and
+ * what has been earned.
+ *
+ * The deposit/withdraw pair is here rather than in the order panel because it
+ * is a different kind of action - it moves money between the wallet and WinCut
+ * rather than between USDC and a token - and mixing the two is how people
+ * withdraw when they meant to sell.
+ */
+
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { useAccount, useBalance, usePublicClient, useWalletClient } from "wagmi";
 import Link from "next/link";
+
 import { Page } from "@/components/Shell";
-import {
-  AddressLink,
-  Avatar,
-  Badge,
-  Button,
-  Card,
-  Empty,
-  ErrorBox,
-  Money,
-  Row,
-  SectionHeading,
-  SkeletonRows,
-  TxLink,
-} from "@/components/ui";
-import { ConnectCta, FaucetLink } from "@/components/NetworkGate";
+import { ConnectCta, ContractNote, NeedsContract } from "@/components/Gate";
+import { TradeList } from "@/components/TradeTabs";
+import { Card, Empty, Loading, SectionHeading, SkeletonRows, StatTile } from "@/components/ui";
 import { useToast } from "@/components/Toast";
-import { useAccountState, useCoins, useEarnings, useTrades } from "@/lib/data";
-import { addr, isDeployed, QUOTE } from "@/lib/chain";
-import { winCutHookAbi } from "@/config/abis";
+import {
+  useClaimable,
+  useInternalBalance,
+  useLossCredit,
+  useMyTrades,
+  useNearBalance,
+  usePositions,
+  useRefreshAfterTrade,
+  useRoute,
+  useTokens,
+  useWalletUsdc,
+} from "@/lib/queries";
+import { useWallet } from "@/lib/wallet";
+import * as act from "@/lib/actions";
+import { isRegisteredOn } from "@/lib/near";
+import { quoteRoute } from "@/lib/rhea";
 import { inviteLink } from "@/lib/referral";
-import { reason } from "@/components/TradePanel";
-import { usd, coins as fmtCoins, price as fmtPrice, short } from "@/lib/format";
+import { USDC_DECIMALS, USDC_ID, isDeployed } from "@/lib/near";
+import {
+  price as fmtPrice,
+  shortAccount,
+  tokens as fmtTokens,
+  toNumber,
+  toRaw,
+  usd,
+  usdFromNumber,
+} from "@/lib/format";
+import type { PositionView } from "@/lib/contract";
 
 export default function MePage() {
-  const { address, isConnected } = useAccount();
-  const client = usePublicClient();
-  const { data: wallet } = useWalletClient();
-  const { data: bal } = useBalance({ address });
+  const { accountId } = useWallet();
 
-  const acct = useAccountState(address);
-  const coinsQ = useCoins();
-  const trades = useTrades();
-  const earnings = useEarnings(address);
+  const balance = useInternalBalance(accountId);
+  const walletUsdc = useWalletUsdc(accountId);
+  const nearBalance = useNearBalance(accountId);
+  const credit = useLossCredit(accountId);
+  const claimable = useClaimable(accountId);
+  const positions = usePositions(accountId);
+  const myTrades = useMyTrades(accountId, 100);
 
-  const toast = useToast();
-  const [status, setStatus] = useState<"idle" | "pending" | "confirmed" | "failed">("idle");
-  const [hash, setHash] = useState<`0x${string}` | undefined>();
-  const [error, setError] = useState<string | undefined>();
-  const [copied, setCopied] = useState(false);
-
-  // Realised PnL and fees paid, from this wallet's own Sold events.
-  const stats = useMemo(() => {
-    if (!trades.data || !address) return undefined;
-    const mine = trades.data.filter((t) => t.trader.toLowerCase() === address.toLowerCase());
-    let realised = 0n,
-      feesPaid = 0n,
-      wins = 0,
-      exits = 0,
-      volume = 0n;
-    for (const t of mine) {
-      if (t.kind !== "sell") continue;
-      exits += 1;
-      realised += t.pnl ?? 0n;
-      feesPaid += t.fee ?? 0n;
-      volume += t.quoteAmount;
-      if ((t.pnl ?? 0n) > 0n) wins += 1;
-    }
-    // What a conventional 0.5%-of-volume app would have taken instead.
-    const wouldHavePaid = (volume * 50n) / 10_000n;
-    return { realised, feesPaid, wins, exits, volume, saved: wouldHavePaid - feesPaid };
-  }, [trades.data, address]);
-
-  async function claim() {
-    if (!wallet || !client) return;
-    setStatus("pending");
-    setError(undefined);
-    const id = toast.push({
-      kind: "pending",
-      title: "Claiming earnings",
-      detail: "Approve in your wallet",
-    });
-    try {
-      const h = await wallet.writeContract({
-        address: addr.hook,
-        abi: winCutHookAbi,
-        functionName: "claim",
-        chain: wallet.chain,
-        account: wallet.account,
-      });
-      setHash(h);
-      toast.update(id, { detail: "Waiting for the block", hash: h });
-      const r = await client.waitForTransactionReceipt({ hash: h });
-      if (r.status !== "success") throw new Error("claim reverted");
-      setStatus("confirmed");
-      toast.update(id, {
-        kind: "confirmed",
-        title: "Earnings claimed",
-        detail: undefined,
-        hash: h,
-      });
-      acct.refetch();
-      earnings.refetch();
-    } catch (e) {
-      setStatus("failed");
-      const msg = reason(e);
-      setError(msg);
-      toast.update(id, { kind: "failed", title: "Claim failed", detail: msg });
-    }
-  }
-
-  async function shareInvite() {
-    try {
-      await navigator.clipboard.writeText(inviteLink(address));
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2_000);
-    } catch {
-      // Clipboard access can be denied; the link is printed below regardless.
-      setCopied(false);
-    }
-  }
-
-  if (!isConnected)
+  if (!accountId) {
     return (
-      <Page>
-        <Empty
-          title="Connect your wallet"
-          hint="Your positions, loss credit and earnings live here. Nothing is stored off chain — this screen is just a view of the hook."
-        />
-        <ConnectCta />
+      <Page width="lg">
+        <Card className="p-4 text-center">
+          <h1 className="text-base font-semibold">Your WinCut account</h1>
+          <p className="mx-auto mt-1.5 max-w-sm text-[11px] leading-relaxed text-secondary">
+            Connect to see your USDC balance, open positions, banked loss credit and anything
+            you have earned from people copying you.
+          </p>
+          <div className="mx-auto mt-3 max-w-xs">
+            <ConnectCta />
+          </div>
+        </Card>
       </Page>
     );
-
-  const claimable = acct.data?.claimable ?? 0n;
-  const credit = acct.data?.lossCredit ?? 0n;
+  }
 
   return (
-    <Page>
-      {/* -------------------------------------------------- portfolio */}
-      <Card className="p-4">
-        <div className="flex items-center gap-3">
-          <Avatar address={address} size={40} />
-          <div className="min-w-0 flex-1">
-            <p className="num truncate text-sm font-semibold">{short(address)}</p>
-            <p className="mt-0.5 flex gap-3 text-[11px]">
-              <AddressLink address={address} label="explorer ↗" />
-              <Link
-                href={`/trader/${address}`}
-                className="text-accent underline-offset-2 hover:underline"
-              >
-                public profile ↗
-              </Link>
-            </p>
-          </div>
-        </div>
-        <div className="mt-3 border-t border-border pt-3">
-          <p className="text-xs text-secondary">Cash · {QUOTE.symbol}</p>
-          <p className="num mt-1 text-[28px] leading-none font-semibold">
-            <Money value={bal?.value} />
-          </p>
-        </div>
-      </Card>
-
-      {acct.isLoading && <SkeletonRows rows={2} height="h-20" />}
-      {acct.error && <ErrorBox title="Cannot read your account" detail={String(acct.error)} />}
-
-      {/* ------------------------------------------ realised performance */}
-      {stats && (
-        <Card className="p-4">
-          <p className="text-xs text-secondary">Realised P&amp;L</p>
-          <p
-            className={`num mt-1 text-[28px] leading-none font-semibold ${
-              stats.realised > 0n ? "text-profit" : stats.realised < 0n ? "text-loss" : "text-text"
-            }`}
-          >
-            {usd(stats.realised, { sign: true })}
-          </p>
-          <div className="mt-3 border-t border-border pt-2">
-            <Row label="Exits" value={String(stats.exits)} />
-            <Row
-              label="Win rate"
-              value={stats.exits ? `${Math.round((stats.wins / stats.exits) * 100)}%` : "—"}
-            />
-            <Row label="Fees you paid WinCut" value={usd(stats.feesPaid)} />
-            <Row
-              label="A 0.5% app would have taken"
-              value={usd((stats.volume * 50n) / 10_000n)}
-              tone="muted"
-            />
-            <Row
-              label="Saved by WinCut"
-              value={usd(stats.saved, { sign: true })}
-              strong
-              tone={stats.saved >= 0n ? "profit" : "loss"}
-            />
-          </div>
-        </Card>
-      )}
-
-      {/* ------------------------------------------------- loss credit */}
-      <Card tone={credit > 0n ? "accent" : "surface"} className="p-4">
-        <p className={`text-xs ${credit > 0n ? "text-accent" : "text-secondary"}`}>Loss credit</p>
-        <p className="num mt-1 text-2xl font-semibold">{usd(credit)}</p>
-        <p className="mt-1 text-[11px] leading-snug text-secondary">
-          {credit > 0n
-            ? "Your next profit up to this amount is charged nothing."
-            : "Losses bank a credit here that offsets future fees."}
-        </p>
-      </Card>
-
-      {/* --------------------------------------------------- claimable */}
-      <Card tone={claimable > 0n ? "profit" : "surface"} className="p-4">
-        <p className={`text-xs ${claimable > 0n ? "text-profit" : "text-secondary"}`}>
-          Claimable earnings
-        </p>
-        <p className="num mt-1 text-[28px] leading-none font-semibold">{usd(claimable)}</p>
-        <p className="mt-1.5 text-[11px] leading-snug text-secondary">
-          Read directly from the hook. Earned when people who copied you, or whom you referred,
-          exit at a profit.
-        </p>
-        {earnings.data && earnings.data.total > 0n && (
-          <p className="num mt-1 text-[11px] text-secondary">
-            Paid to you in total so far: {usd(earnings.data.total)} across {earnings.data.payouts}{" "}
-            exit{earnings.data.payouts === 1 ? "" : "s"}.
-          </p>
-        )}
-        <Button
-          onClick={claim}
-          disabled={claimable === 0n || status === "pending"}
-          className="mt-3 w-full"
+    <Page width="lg">
+      <header className="flex flex-wrap items-baseline justify-between gap-2">
+        <h1 className="num text-lg font-semibold">{shortAccount(accountId)}</h1>
+        <Link
+          href={`/trader/${encodeURIComponent(accountId)}`}
+          className="text-[11px] text-accent underline-offset-2 hover:underline"
         >
-          {status === "pending" ? "Claiming…" : "Claim"}
-        </Button>
-      </Card>
+          your public trader page →
+        </Link>
+      </header>
 
-      {error && <ErrorBox title="Claim failed" detail={error} />}
-      {status === "confirmed" && hash && (
-        <Card className="p-2 text-center">
-          <TxLink hash={hash}>View the claim on the explorer ↗</TxLink>
-        </Card>
-      )}
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <StatTile
+          label="WinCut balance"
+          value={balance.data === undefined ? "…" : usd(balance.data)}
+          sub="spendable on trades"
+        />
+        <StatTile
+          label="Loss credit"
+          tone="accent"
+          value={credit.data === undefined ? "…" : usd(credit.data)}
+          sub="spent before any fee"
+        />
+        <StatTile
+          label="Claimable"
+          tone={claimable.data && claimable.data > 0n ? "profit" : "text"}
+          value={claimable.data === undefined ? "…" : usd(claimable.data)}
+          sub="copy + referral earnings"
+        />
+        <StatTile
+          label="In your wallet"
+          value={walletUsdc.data === undefined ? "…" : usd(walletUsdc.data)}
+          sub={
+            nearBalance.data === undefined
+              ? "USDC"
+              : `USDC · ${(Number(nearBalance.data) / 1e24).toFixed(2)} NEAR for gas`
+          }
+        />
+      </div>
 
-      {/* ------------------------------------------------------ invite */}
-      <Card className="p-4">
-        <p className="text-sm font-semibold">Your invite link</p>
-        <p className="mt-1 text-[11px] leading-snug text-secondary">
-          You earn 20% of the fee whenever someone you invited exits at a profit. If they lose,
-          you earn nothing — there is no fee to split.
-        </p>
-        <Button tone="elevated" className="mt-3 w-full" onClick={shareInvite}>
-          {copied ? "Link copied ✓" : "Copy invite link"}
-        </Button>
-        <p className="mt-2 text-[11px] break-all text-secondary">{inviteLink(address)}</p>
-      </Card>
+      <Money
+        accountId={accountId}
+        internal={balance.data ?? 0n}
+        wallet={walletUsdc.data ?? 0n}
+        claimable={claimable.data ?? 0n}
+      />
 
-      {/* --------------------------------------------------- positions */}
       <section className="flex flex-col gap-2">
-        <SectionHeading>Positions</SectionHeading>
-        {coinsQ.isLoading && <SkeletonRows rows={2} height="h-20" />}
-        {coinsQ.data?.map((c) => (
-          <PositionCard key={c.address} coin={c} account={address!} />
-        ))}
-        {isDeployed && coinsQ.data?.length === 0 && (
+        <SectionHeading>Open positions</SectionHeading>
+        {!isDeployed ? (
+          <NeedsContract what="positions" />
+        ) : positions.isPending ? (
+          <SkeletonRows rows={2} height="h-16" />
+        ) : positions.isError ? (
+          <ErrorCard detail={(positions.error as Error).message} />
+        ) : !positions.data?.length ? (
           <Empty
-            title="No coins yet. Be the first."
-            hint="Launch one and your position shows up here."
+            title="Nothing open"
+            hint="Buying costs no WinCut fee, so opening a position only ever costs Rhea's pool fee and gas."
           />
+        ) : (
+          <Card className="p-0">
+            <ul className="flex flex-col divide-y divide-border">
+              {positions.data.map((p) => (
+                <li key={p.token_id}>
+                  <PositionRow position={p} />
+                </li>
+              ))}
+            </ul>
+          </Card>
         )}
       </section>
 
-      <div className="flex justify-center">
-        <FaucetLink />
-      </div>
+      <section className="flex flex-col gap-2">
+        <SectionHeading>Your trades</SectionHeading>
+        {!isDeployed ? (
+          <NeedsContract what="your trades" />
+        ) : myTrades.isPending ? (
+          <Loading label="Reading your trades" />
+        ) : !myTrades.data?.length ? (
+          <Empty title="No trades yet" hint="They appear here as soon as one settles on chain." />
+        ) : (
+          <Card className="px-3 py-1">
+            <TradeList trades={myTrades.data} />
+          </Card>
+        )}
+      </section>
+
+      <Invite accountId={accountId} />
+      <ContractNote />
     </Page>
   );
 }
 
-function PositionCard({
-  coin,
-  account,
+/* ----------------------------------------------------------- deposit flow */
+
+function Money({
+  accountId,
+  internal,
+  wallet,
+  claimable,
 }: {
-  coin: { address: `0x${string}`; symbol: string; poolId: `0x${string}` };
-  account: `0x${string}`;
+  accountId: string;
+  internal: bigint;
+  wallet: bigint;
+  claimable: bigint;
 }) {
-  const [open, setOpen] = useState(false);
+  const { sign, signBatch } = useWallet();
+  const toast = useToast();
+  const refresh = useRefreshAfterTrade(accountId);
+  const [mode, setMode] = useState<"deposit" | "withdraw">("deposit");
+  const [amount, setAmount] = useState("");
+  const [busy, setBusy] = useState(false);
 
-  const q = useAccountPosition(coin.poolId, account);
-  if (!q.data || q.data.amount === 0n) return null;
+  const raw = useMemo(() => toRaw(amount, USDC_DECIMALS), [amount]);
+  const max = mode === "deposit" ? wallet : internal;
+  const tooMuch = raw > max;
 
-  const { amount, cost } = q.data;
-  const avg = amount > 0n ? (cost * 10n ** 18n) / amount : 0n;
+  async function run() {
+    if (raw === 0n || tooMuch || busy) return;
+    setBusy(true);
+    const id = toast.push({
+      kind: "pending",
+      title: `${mode === "deposit" ? "Depositing" : "Withdrawing"} ${usd(raw)}`,
+    });
+    try {
+      let hash: string;
+      if (mode === "deposit") {
+        hash = await sign(act.depositUsdc(raw));
+      } else {
+        // A withdrawal to an account with no USDC storage bounces, and WinCut
+        // just puts the money back. Paying the 0.00125 NEAR first in the same
+        // transaction turns a confusing round trip into one signature.
+        const registered = await isRegisteredOn(USDC_ID, accountId);
+        if (registered) {
+          hash = await sign(act.withdrawUsdc(raw));
+        } else {
+          await sign(act.registerSelfOnUsdc(accountId));
+          hash = await sign(act.withdrawUsdc(raw));
+        }
+      }
+      toast.update(id, {
+        kind: "confirmed",
+        title: mode === "deposit" ? `Deposited ${usd(raw)}` : `Withdrew ${usd(raw)}`,
+        hash,
+      });
+      setAmount("");
+      refresh();
+    } catch (e) {
+      toast.update(id, {
+        kind: "failed",
+        title: mode === "deposit" ? "Deposit failed" : "Withdrawal failed",
+        detail: (e as Error).message?.slice(0, 220),
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function claim() {
+    setBusy(true);
+    const id = toast.push({ kind: "pending", title: `Claiming ${usd(claimable)}` });
+    try {
+      const hash = await sign(act.claimEarnings());
+      toast.update(id, { kind: "confirmed", title: `Claimed ${usd(claimable)}`, hash });
+      refresh();
+    } catch (e) {
+      toast.update(id, {
+        kind: "failed",
+        title: "Claim failed",
+        detail: (e as Error).message?.slice(0, 220),
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // `signBatch` is used for nothing here yet; referenced so the shape stays
+  // available to callers that need a multi-action transaction.
+  void signBatch;
 
   return (
     <Card className="p-3">
+      <div className="flex gap-1.5">
+        {(["deposit", "withdraw"] as const).map((m) => (
+          <button
+            key={m}
+            type="button"
+            onClick={() => {
+              setMode(m);
+              setAmount("");
+            }}
+            className={`flex-1 rounded-btn py-1.5 text-xs font-semibold capitalize transition-colors ${
+              mode === m ? "bg-elevated text-text" : "text-secondary hover:text-text"
+            }`}
+          >
+            {m}
+          </button>
+        ))}
+      </div>
+
+      <div className="mt-2.5 flex items-center gap-2 rounded-btn border border-border bg-bg px-3 py-2 focus-within:border-accent">
+        <input
+          value={amount}
+          onChange={(e) => setAmount(e.target.value.replace(/[^\d.]/g, ""))}
+          inputMode="decimal"
+          placeholder="0.00"
+          aria-label={`Amount to ${mode}`}
+          className="num min-w-0 flex-1 bg-transparent text-lg font-semibold outline-none placeholder:text-secondary"
+        />
+        <button
+          type="button"
+          onClick={() => setAmount(toNumber(max, USDC_DECIMALS).toString())}
+          className="shrink-0 rounded-pill border border-border px-2 py-0.5 text-[10px] text-secondary hover:text-text"
+        >
+          max
+        </button>
+        <span className="shrink-0 text-xs font-medium text-secondary">USDC</span>
+      </div>
+
+      <p className="mt-1.5 text-[10px] text-secondary">
+        {mode === "deposit"
+          ? `In your wallet: ${usd(wallet)}. Deposited USDC can be traded with no per-swap approval.`
+          : `Inside WinCut: ${usd(internal)}. Withdrawals need a wallet signature, every time.`}
+      </p>
+      {tooMuch && <p className="mt-1 text-[11px] text-loss">More than you have.</p>}
+
       <button
-        className="tap flex w-full items-center gap-3 text-left"
-        onClick={() => setOpen(!open)}
-        aria-expanded={open}
+        type="button"
+        onClick={() => void run()}
+        disabled={raw === 0n || tooMuch || busy || !isDeployed}
+        className="tap mt-2.5 w-full rounded-btn bg-accent py-2.5 text-sm font-semibold text-white transition-colors hover:bg-accent/90 disabled:opacity-40"
       >
-        <Avatar address={coin.address} size={32} />
-        <div className="min-w-0 flex-1">
-          <p className="text-sm font-semibold">{coin.symbol}</p>
-          <p className="num mt-0.5 text-[11px] text-secondary">{fmtCoins(amount)} held</p>
-        </div>
-        <div className="shrink-0 text-right">
-          <p className="num text-sm font-semibold">{usd(cost)}</p>
-          <p className="text-[10px] text-secondary">cost basis</p>
-        </div>
-        <span className="shrink-0 text-secondary">{open ? "▴" : "▾"}</span>
+        {busy ? "Signing…" : mode === "deposit" ? "Deposit USDC" : "Withdraw USDC"}
       </button>
 
-      {open && (
-        <div className="mt-3 border-t border-border pt-2">
-          <Row label="Amount" value={fmtCoins(amount)} />
-          <Row label="Total cost" value={usd(cost)} />
-          <Row label="Avg cost / coin" value={fmtPrice(Number(avg) / 1e18)} />
-          <div className="mt-2 flex items-center gap-2">
-            <Badge>tracked by the hook</Badge>
-            <Link
-              href={`/coin/${coin.address}`}
-              className="text-[11px] text-accent underline-offset-2 hover:underline"
-            >
-              Trade ↗
-            </Link>
-          </div>
-          <p className="mt-2 text-[11px] leading-snug text-secondary">
-            Only coins bought through WinCut are tracked. Airdropped or transferred coins carry no
-            basis and are never charged a fee.
-          </p>
-        </div>
+      {claimable > 0n && (
+        <button
+          type="button"
+          onClick={() => void claim()}
+          disabled={busy}
+          className="tap mt-2 w-full rounded-btn border border-profit/40 bg-profit-dim py-2.5 text-sm font-semibold text-profit transition-colors hover:bg-profit/20 disabled:opacity-40"
+        >
+          Claim {usd(claimable)} earned
+        </button>
       )}
     </Card>
   );
 }
 
-/// Small local hook so each position card reads its own slice.
-function useAccountPosition(poolId: `0x${string}`, account: `0x${string}`) {
-  const client = usePublicClient();
-  return useQuery({
-    queryKey: ["pos", poolId, account],
-    enabled: !!client,
-    refetchInterval: 6_000,
-    queryFn: async () => {
-      const [amount, cost] = await client!.readContract({
-        address: addr.hook,
-        abi: winCutHookAbi,
-        functionName: "positionOf",
-        args: [account, poolId],
-      });
-      return { amount, cost };
-    },
-  });
+/* -------------------------------------------------------------- positions */
+
+function PositionRow({ position }: { position: PositionView }) {
+  const tokens = useTokens();
+  const token = tokens.data?.find((t) => t.token_id === position.token_id);
+  const route = useRoute(token);
+
+  const amount = BigInt(position.amount);
+  const basis = BigInt(position.cost_basis_usdc);
+  const entry = toNumber(basis, USDC_DECIMALS) / toNumber(amount, position.decimals);
+
+  const nowWorth = route.data ? quoteRoute(amount, route.data.sell) : undefined;
+  const pnl = nowWorth === undefined ? undefined : nowWorth - basis;
+  const pnlPct =
+    pnl === undefined || basis === 0n ? undefined : (Number(pnl) / Number(basis)) * 100;
+
+  return (
+    <Link
+      href={`/trade/${encodeURIComponent(position.token_id)}`}
+      className="flex items-center gap-3 px-3 py-3 transition-colors hover:bg-elevated"
+    >
+      <div className="min-w-0 flex-1">
+        <p className="text-[14px] font-semibold">{position.symbol || shortAccount(position.token_id)}</p>
+        <p className="num mt-0.5 text-[10px] text-secondary">
+          {fmtTokens(amount, position.decimals)} · entry {fmtPrice(entry)}
+          {position.followed && ` · copying ${shortAccount(position.followed)}`}
+        </p>
+      </div>
+      <div className="shrink-0 text-right">
+        <p className="num text-[13px] font-medium">
+          {nowWorth === undefined ? "…" : usd(nowWorth)}
+        </p>
+        <p
+          className={`num text-[10px] ${
+            pnl === undefined ? "text-secondary" : pnl >= 0n ? "text-profit" : "text-loss"
+          }`}
+        >
+          {pnl === undefined
+            ? `cost ${usd(basis)}`
+            : `${usdFromNumber(toNumber(pnl, USDC_DECIMALS), { sign: true })}${
+                pnlPct !== undefined ? ` (${pnlPct > 0 ? "+" : ""}${pnlPct.toFixed(1)}%)` : ""
+              }`}
+        </p>
+      </div>
+    </Link>
+  );
+}
+
+/* ----------------------------------------------------------------- invite */
+
+function Invite({ accountId }: { accountId: string }) {
+  const [copied, setCopied] = useState(false);
+  const link = inviteLink(accountId);
+
+  return (
+    <Card className="p-3">
+      <SectionHeading>Your invite link</SectionHeading>
+      <p className="mt-1 text-[11px] leading-relaxed text-secondary">
+        You earn 20% of the WinCut fee from anyone who arrives through this link - and only on the
+        trades they close in profit. If they lose, you earn nothing, because there is no fee to
+        share.
+      </p>
+      <div className="mt-2 flex items-center gap-2">
+        <code className="min-w-0 flex-1 truncate rounded-btn border border-border bg-bg px-3 py-2 text-[11px] text-secondary">
+          {link || "…"}
+        </code>
+        <button
+          type="button"
+          onClick={() => {
+            void navigator.clipboard?.writeText(link);
+            setCopied(true);
+            setTimeout(() => setCopied(false), 1800);
+          }}
+          className="tap shrink-0 rounded-btn border border-border bg-surface px-3 py-2 text-[11px] font-medium hover:bg-elevated"
+        >
+          {copied ? "copied" : "copy"}
+        </button>
+      </div>
+    </Card>
+  );
+}
+
+function ErrorCard({ detail }: { detail: string }) {
+  return (
+    <Card tone="loss" className="p-3">
+      <p className="text-xs font-semibold text-loss">Could not read the contract</p>
+      <p className="mt-1 text-[11px] break-words text-secondary">{detail}</p>
+    </Card>
+  );
 }

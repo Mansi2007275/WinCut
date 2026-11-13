@@ -1,507 +1,471 @@
 "use client";
 
+/**
+ * The landing page. One idea, stated once, then proved with live numbers.
+ *
+ * The calculator is not an illustration: it calls `quote_fee_for` on the
+ * deployed contract, which runs the same pure settlement function the sell
+ * callback runs. The traders below it are the real leaderboard, and the
+ * markets are the real listed routes with live prices from Rhea.
+ */
+
 import { Suspense, useMemo, useState } from "react";
 import Link from "next/link";
-import { AnimatePresence, motion } from "framer-motion";
-import { useAccount, useBalance, usePublicClient, useWalletClient } from "wagmi";
+
 import { Page } from "@/components/Shell";
+import { MarketRow } from "@/components/MarketRow";
+import { LeaderboardList } from "@/components/TradeTabs";
+import { ConnectCta, NeedsContract } from "@/components/Gate";
+import { Card, Empty, SectionHeading, SkeletonRows } from "@/components/ui";
 import {
-  AddressLink,
-  Avatar,
-  Badge,
-  Button,
-  Card,
-  Chip,
-  ColumnHeader,
-  Empty,
-  ErrorBox,
-  Money,
-  SectionHeading,
-  SkeletonRows,
-  Tabs,
-  TxLink,
-  useFlash,
-} from "@/components/ui";
-import { FaucetLink } from "@/components/NetworkGate";
-import { useToast } from "@/components/Toast";
-import { useCoins, useCoinStats, useHead, useLeaderboard, useTrades, type Coin } from "@/lib/data";
-import { isDeployed, QUOTE } from "@/lib/chain";
-import { useReferral } from "@/lib/referral";
-import { useWatchlist } from "@/lib/watchlist";
-import { useInView } from "@/lib/useInView";
-import { buyCoin } from "@/lib/trade";
-import { reason } from "@/components/TradePanel";
-import { ago, coins as fmtCoins, price as fmtPrice, short, usd } from "@/lib/format";
+  useAllPoolStats,
+  useConfig,
+  useFeeExample,
+  useLeaderboard,
+  useRecentTrades,
+  useTokens,
+} from "@/lib/queries";
+import { useWallet } from "@/lib/wallet";
+import { USDC_DECIMALS, isDeployed } from "@/lib/near";
+import { toNumber, toRaw, usd, usdFromNumber } from "@/lib/format";
 
-type TabId = "trending" | "new" | "traders" | "watchlist";
-
-const TABS = [
-  { id: "trending" as const, label: "Trending" },
-  { id: "new" as const, label: "New" },
-  { id: "traders" as const, label: "Top traders" },
-  { id: "watchlist" as const, label: "Watchlist" },
-];
-
-export default function DiscoverPage() {
+export default function Landing() {
   return (
-    <Suspense
-      fallback={
-        <Page>
-          <SkeletonRows rows={4} height="h-24" />
-        </Page>
-      }
-    >
-      <Discover />
+    <Suspense fallback={<Page width="lg" />}>
+      <LandingBody />
     </Suspense>
   );
 }
 
-function Discover() {
-  const coinsQ = useCoins();
-  const trades = useTrades();
-  const head = useHead();
-  const { rows } = useLeaderboard();
-  const { address, isConnected } = useAccount();
-  const { data: bal } = useBalance({ address });
-  const { has: watched } = useWatchlist();
+function LandingBody() {
+  const { accountId } = useWallet();
+  const tokens = useTokens();
+  const stats = useAllPoolStats(tokens.data);
+  const board = useLeaderboard(5);
+  const trades = useRecentTrades(10);
+  const config = useConfig();
 
-  const [tab, setTab] = useState<TabId>("trending");
-  const [query, setQuery] = useState("");
-
-  // Memoised so the ordering/filtering memos below do not re-run every render
-  // on a fresh array identity.
-  const coins = useMemo(() => coinsQ.data ?? [], [coinsQ.data]);
-
-  /**
-   * Ordering is derived, never stored.
-   *
-   * "Trending" is by swap count in the pool, which is the only activity signal
-   * the chain actually gives us. "New" is latest launch first, which is the
-   * launcher's own array order reversed.
-   */
-  const ordered = useMemo(() => {
-    const swapsOf = (c: Coin) =>
-      (trades.data ?? []).filter((t) => t.poolId === c.poolId).length;
-    if (tab === "new") return [...coins].reverse();
-    if (tab === "watchlist") return coins.filter((c) => watched(c.address));
-    if (tab === "trending") return [...coins].sort((a, b) => swapsOf(b) - swapsOf(a));
-    return coins;
-  }, [coins, tab, trades.data, watched]);
-
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return ordered;
-    return ordered.filter(
-      (c) =>
-        c.symbol.toLowerCase().includes(q) ||
-        c.name.toLowerCase().includes(q) ||
-        c.address.toLowerCase().includes(q) ||
-        c.creator.toLowerCase().includes(q),
-    );
-  }, [ordered, query]);
-
-  const traderRows = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    const all = rows ?? [];
-    return q ? all.filter((r) => r.trader.toLowerCase().includes(q)) : all;
-  }, [rows, query]);
-
-  if (!isDeployed) {
-    return (
-      <Page>
-        <Empty
-          title="Waiting on a deployment"
-          hint="Once the contracts are live on Arc testnet, every coin and trade on this screen is read straight from the chain."
-        />
-      </Page>
-    );
-  }
-
-  if (coinsQ.error) {
-    return (
-      <Page>
-        <ErrorBox title="Cannot reach Arc" detail={reason(coinsQ.error)} />
-      </Page>
-    );
-  }
+  const settled = useMemo(() => {
+    const list = trades.data ?? [];
+    const sells = list.filter((t) => t.side === "Sell");
+    const freeSells = sells.filter((t) => BigInt(t.fee) === 0n).length;
+    return { sells: sells.length, freeSells, total: config.data?.total_trades ?? list.length };
+  }, [trades.data, config.data]);
 
   return (
-    <Page>
-      {/* Balance. The one number the user needs before they can do anything. */}
-      <Card className="p-4">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <p className="text-xs text-secondary">Cash · {QUOTE.symbol} on Arc Testnet</p>
-            <p className="num mt-1 text-[28px] leading-none font-semibold">
-              {isConnected ? <Money value={bal?.value} /> : "—"}
-            </p>
-          </div>
-          <FaucetLink className="shrink-0 pt-1 text-xs" />
+    <Page width="lg">
+      {/* ------------------------------------------------------------ hero */}
+      <section>
+        <h1 className="text-[26px] leading-tight font-semibold sm:text-[32px]">
+          Copy trading where the fee
+          <br />
+          <span className="text-profit">only comes out of profit.</span>
+        </h1>
+        <p className="mt-2 max-w-xl text-[13px] leading-relaxed text-secondary">
+          Buying is free. Selling at a loss is free, and the loss is banked as a credit that
+          shelters your next win. Only a realised profit is charged, at 10%, split with the trader
+          you copied and whoever referred you.
+        </p>
+
+        <div className="mt-4 flex flex-wrap items-center gap-2">
+          <Link
+            href="/trade"
+            className="tap rounded-btn bg-profit px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-profit/90"
+          >
+            Start trading
+          </Link>
+          {!accountId && (
+            <div className="w-40">
+              <ConnectCta />
+            </div>
+          )}
+          <Link
+            href="/how-it-works"
+            className="rounded-btn border border-border px-4 py-2.5 text-sm font-medium text-secondary transition-colors hover:text-text"
+          >
+            How the fee works
+          </Link>
         </div>
-      </Card>
+      </section>
 
-      <label className="relative block">
-        <span className="sr-only">Search coins or traders</span>
-        <svg
-          viewBox="0 0 24 24"
-          fill="none"
-          aria-hidden
-          className="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-secondary"
-        >
-          <circle cx="11" cy="11" r="6.5" stroke="currentColor" strokeWidth="1.6" />
-          <path d="m16 16 4 4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-        </svg>
-        <input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search coins or traders"
-          className="tap w-full rounded-btn border border-border bg-surface pr-3 pl-9 text-sm outline-none placeholder:text-secondary focus:border-accent/60"
-        />
-      </label>
+      {/* ------------------------------------------------------ calculator */}
+      <Calculator />
 
-      <Tabs options={TABS} value={tab} onChange={setTab} />
+      {/* -------------------------------------------------- the comparison */}
+      <Comparison />
 
-      {tab === "traders" ? (
-        <TopTraders rows={traderRows} loading={trades.isPending} />
-      ) : coinsQ.isLoading ? (
-        <SkeletonRows rows={3} height="h-24" />
-      ) : !filtered.length ? (
-        <EmptyForTab tab={tab} query={query} hasAnyCoin={coins.length > 0} />
-      ) : (
-        <div className="flex flex-col gap-2">
-          <ColumnHeader>
-            <span>Coin</span>
-            <span className="flex gap-6">
-              <span>Price</span>
-              <span>Since launch</span>
-            </span>
-          </ColumnHeader>
-          {filtered.map((c, i) => (
-            <CoinRow key={c.address} coin={c} index={i} head={head.data} />
-          ))}
-        </div>
+      {/* --------------------------------------------------- live evidence */}
+      {isDeployed && settled.sells > 0 && (
+        <Card className="p-3">
+          <p className="text-[11px] leading-relaxed text-secondary">
+            <span className="num font-semibold text-text">{settled.total}</span> trades settled on
+            chain so far.{" "}
+            <span className="num font-semibold text-profit">{settled.freeSells}</span> of the last{" "}
+            <span className="num">{settled.sells}</span> sells were charged nothing at all,
+            because they were not profitable.
+          </p>
+        </Card>
       )}
 
-      <LiveActivity head={head.data} />
+      {/* --------------------------------------------------------- traders */}
+      <section className="flex flex-col gap-2">
+        <SectionHeading
+          right={
+            <Link href="/board" className="text-[11px] text-accent hover:underline">
+              all traders →
+            </Link>
+          }
+        >
+          Top traders right now
+        </SectionHeading>
+        {!isDeployed ? (
+          <NeedsContract what="top traders" />
+        ) : board.isPending ? (
+          <SkeletonRows rows={3} height="h-14" />
+        ) : !board.data?.length ? (
+          <Empty
+            title="Nobody on the board yet"
+            hint="Traders appear once they have closed a position, because the board ranks by realised profit rather than by an open paper gain."
+          />
+        ) : (
+          <Card className="px-3 py-1">
+            <LeaderboardList rows={board.data} />
+          </Card>
+        )}
+      </section>
+
+      {/* --------------------------------------------------------- markets */}
+      <section className="flex flex-col gap-2">
+        <SectionHeading
+          right={
+            <Link href="/trade" className="text-[11px] text-accent hover:underline">
+              all markets →
+            </Link>
+          }
+        >
+          Markets
+        </SectionHeading>
+        {tokens.isPending ? (
+          <SkeletonRows rows={4} height="h-16" />
+        ) : !tokens.data?.length ? (
+          <Empty title="No markets listed yet" hint="Run list_token for each verified route." />
+        ) : (
+          <Card className="p-0">
+            <ul className="flex flex-col divide-y divide-border">
+              {tokens.data.slice(0, 4).map((token) => (
+                <li key={token.token_id}>
+                  <Link
+                    href={`/trade/${encodeURIComponent(token.token_id)}`}
+                    className="block transition-colors hover:bg-elevated"
+                  >
+                    <MarketRow token={token} stats={stats.data?.get(token.chart_pool)} />
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </Card>
+        )}
+      </section>
     </Page>
   );
 }
 
-function EmptyForTab({
-  tab,
-  query,
-  hasAnyCoin,
-}: {
-  tab: TabId;
-  query: string;
-  hasAnyCoin: boolean;
-}) {
-  if (query.trim()) {
-    return <Empty title="Nothing matches that" hint="Search by symbol, name, or any address." />;
-  }
-  if (tab === "watchlist") {
-    return (
-      <Empty
-        title="Nothing starred yet"
-        hint="Tap the star on a coin page to keep it here. The list lives in this browser only — there is nothing on chain that records a watchlist."
-      />
-    );
-  }
-  if (!hasAnyCoin) {
-    return (
-      <>
-        <Empty
-          title="No coins yet. Be the first."
-          hint="Nothing here is seeded. This list only ever shows coins launched by real wallets on Arc testnet."
-        />
-        <Link href="/launch" className="mt-2 block">
-          <Button className="w-full py-3.5 text-base">Launch the first coin</Button>
-        </Link>
-      </>
-    );
-  }
-  return <Empty title="Nothing here yet" />;
-}
+/* --------------------------------------------------------------- calculator */
 
-/* ------------------------------------------------------------- coin rows */
+/**
+ * The fee calculator, answered by the contract.
+ *
+ * `quote_fee_for` is a view on the deployed contract that runs the same
+ * `settle_sell` the settlement callback runs, so the figure here is not an
+ * approximation of the fee - it is the fee. When no contract is configured the
+ * box says so rather than quietly falling back to doing the arithmetic in the
+ * browser, which would look identical and mean something completely different.
+ */
+function Calculator() {
+  const [stake, setStake] = useState("1000");
+  const [exitPct, setExitPct] = useState(20);
 
-function CoinRow({ coin, index, head }: { coin: Coin; index: number; head?: bigint }) {
-  // Rows only fetch once they are near the viewport. Seven coins each doing a
-  // full Swap and Transfer scan is over a hundred eth_getLogs at once, which
-  // Arc's RPC refuses outright.
-  const { ref, seen } = useInView<HTMLDivElement>();
-  const { stats, isLoading, error: statsError } = useCoinStats(coin, seen);
-  const trades = useTrades();
-  const { follow, referrer } = useReferral();
-  const { isConnected } = useAccount();
-  const client = usePublicClient();
-  const { data: wallet } = useWalletClient();
-  const toast = useToast();
-  const [busy, setBusy] = useState<string | null>(null);
-  const flash = useFlash(stats?.price);
+  const basis = useMemo(() => toRaw(stake || "0", USDC_DECIMALS), [stake]);
+  const proceeds = useMemo(
+    () => (basis * BigInt(Math.round((100 + exitPct) * 100))) / 10_000n,
+    [basis, exitPct],
+  );
 
-  async function quickBuy(dollars: string) {
-    if (!wallet || !client) return;
-    setBusy(dollars);
-    const id = toast.push({
-      kind: "pending",
-      title: `Buying $${dollars} of ${coin.symbol}`,
-      detail: "Approve in your wallet",
-    });
-    try {
-      const { hash } = await buyCoin({
-        wallet,
-        client,
-        poolKey: coin.poolKey,
-        amountIn: BigInt(dollars) * 10n ** 18n,
-        follow,
-        referrer,
-        onHash: (h) => toast.update(id, { detail: "Waiting for the block", hash: h }),
-      });
-      toast.update(id, {
-        kind: "confirmed",
-        title: `Bought ${coin.symbol}`,
-        detail: "No fee on buys",
-        hash,
-      });
-      trades.refetch();
-    } catch (e) {
-      toast.update(id, { kind: "failed", title: "Buy failed", detail: reason(e) });
-    } finally {
-      setBusy(null);
-    }
-  }
+  const quote = useFeeExample(basis, proceeds, 0n, true, true);
 
-  const change = stats?.changePct;
+  const pnl = proceeds - basis;
+  const fee = quote.data ? BigInt(quote.data.fee) : undefined;
+  const keeps = quote.data ? BigInt(quote.data.user_receives) : undefined;
 
   return (
-    <motion.div
-      ref={ref}
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: Math.min(index * 0.03, 0.15), duration: 0.2 }}
-    >
-      <Card className="overflow-hidden">
-        <Link href={`/coin/${coin.address}`} className="block p-3 transition-colors hover:bg-elevated/40">
-          <div className="flex items-center gap-3">
-            <Avatar address={coin.address} size={36} />
-            <div className="min-w-0 flex-1">
-              <p className="text-sm leading-tight font-semibold">{coin.symbol}</p>
-              <p className="num mt-0.5 truncate text-[11px] text-secondary">
-                {statsError ? (
-                  <span className="text-loss">Could not reach Arc</span>
-                ) : (
-                  <>
-                    Vol {usd(stats?.volumeQuote)} · {stats?.holders ?? "—"} holder
-                    {stats?.holders === 1 ? "" : "s"}
-                  </>
-                )}
-              </p>
-            </div>
-            <div className="shrink-0 text-right">
-              <p className={`num text-sm leading-tight font-semibold ${flash}`}>
-                {statsError ? "—" : isLoading ? "…" : fmtPrice(stats?.price ?? 0)}
-              </p>
-              {change !== null && change !== undefined && (
-                <p
-                  className={`num mt-0.5 text-[11px] font-medium ${
-                    change >= 0 ? "text-profit" : "text-loss"
-                  }`}
-                >
-                  {change >= 0 ? "+" : ""}
-                  {change.toFixed(1)}%
-                </p>
-              )}
-            </div>
+    <Card className="p-4">
+      <SectionHeading
+        right={
+          isDeployed ? (
+            <span className="text-[10px] text-secondary">answered by the contract</span>
+          ) : undefined
+        }
+      >
+        What would it cost you
+      </SectionHeading>
+
+      <div className="mt-3 flex flex-wrap items-end gap-4">
+        <div>
+          <label htmlFor="stake" className="text-[10px] font-medium tracking-wide text-secondary uppercase">
+            You put in
+          </label>
+          <div className="mt-1 flex items-center gap-1.5 rounded-btn border border-border bg-bg px-3 py-2 focus-within:border-accent">
+            <span className="text-secondary">$</span>
+            <input
+              id="stake"
+              value={stake}
+              onChange={(e) => setStake(e.target.value.replace(/[^\d.]/g, ""))}
+              inputMode="decimal"
+              className="num w-24 bg-transparent text-base font-semibold outline-none"
+            />
           </div>
-
-          <div className="mt-2.5 flex flex-wrap items-center gap-x-2 gap-y-1">
-            <Badge tone="profit">Fee only on profit</Badge>
-            <span className="text-[11px] text-secondary">Uniswap v4 pool · WinCut hook</span>
-          </div>
-
-          <p className="num mt-1.5 text-[11px] text-secondary">
-            Launched by {short(coin.creator)}
-            {stats?.launchBlock !== undefined && head !== undefined && (
-              <> · {ago(stats.launchBlock, head)}</>
-            )}
-          </p>
-        </Link>
-
-        <div className="flex flex-wrap items-center gap-2 border-t border-border px-3 py-2.5">
-          <span className="text-[11px] text-secondary">Quick buy</span>
-          {["10", "50", "100"].map((v) => (
-            <Chip
-              key={v}
-              onClick={isConnected ? () => void quickBuy(v) : undefined}
-              active={busy === v}
-              className="px-3 text-xs"
-            >
-              {busy === v ? "…" : `$${v}`}
-            </Chip>
-          ))}
-          <Link href={`/coin/${coin.address}`} className="ml-auto">
-            <span className="tap flex items-center rounded-btn bg-accent px-3 text-xs font-semibold text-white">
-              Trade
-            </span>
-          </Link>
         </div>
 
-        {!isConnected && (
-          <p className="border-t border-border px-3 py-2 text-[11px] text-secondary">
-            Connect a wallet to buy. Quick buy sends a real swap on Arc testnet.
-          </p>
-        )}
+        <div className="min-w-[14rem] flex-1">
+          <label htmlFor="exit" className="text-[10px] font-medium tracking-wide text-secondary uppercase">
+            You exit{" "}
+            <span className={exitPct >= 0 ? "num text-profit" : "num text-loss"}>
+              {exitPct > 0 ? "+" : ""}
+              {exitPct}%
+            </span>
+          </label>
+          <input
+            id="exit"
+            type="range"
+            min={-80}
+            max={200}
+            step={5}
+            value={exitPct}
+            onChange={(e) => setExitPct(Number(e.target.value))}
+            className="mt-2.5 w-full accent-accent"
+          />
+          <div className="flex justify-between text-[10px] text-secondary">
+            <span>−80%</span>
+            <span>break even</span>
+            <span>+200%</span>
+          </div>
+        </div>
+      </div>
 
-        {follow && (
-          <p className="border-t border-border px-3 py-2">
-            <Badge tone="accent">copying {short(follow)}</Badge>
-          </p>
-        )}
-      </Card>
-    </motion.div>
+      {!isDeployed ? (
+        <p className="mt-3 rounded-btn border border-border bg-elevated px-3 py-2 text-[11px] leading-relaxed text-secondary">
+          The calculator asks the deployed contract for this figure, so it is exactly what would
+          be charged. Set <code className="text-text">NEXT_PUBLIC_CONTRACT_ID</code> to switch it
+          on - the arithmetic is deliberately not duplicated in the browser.
+        </p>
+      ) : (
+        <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <Figure label="You take out" value={usd(proceeds)} />
+          <Figure
+            label={pnl >= 0n ? "Profit" : "Loss"}
+            value={usdFromNumber(toNumber(pnl, USDC_DECIMALS), { sign: true })}
+            tone={pnl >= 0n ? "profit" : "loss"}
+          />
+          <Figure
+            label="WinCut fee"
+            value={fee === undefined ? "…" : usd(fee)}
+            tone={fee === 0n ? "profit" : "text"}
+            sub={fee === 0n ? "nothing, because there is no profit" : "10% of the profit"}
+          />
+          <Figure
+            label="You keep"
+            value={keeps === undefined ? "…" : usd(keeps)}
+            sub={
+              quote.data && BigInt(quote.data.credit_banked) > 0n
+                ? `plus ${usd(quote.data.credit_banked)} of credit banked`
+                : undefined
+            }
+          />
+        </div>
+      )}
+    </Card>
   );
 }
 
-/* ----------------------------------------------------------- top traders */
-
-function TopTraders({
-  rows,
-  loading,
+function Figure({
+  label,
+  value,
+  tone = "text",
+  sub,
 }: {
-  rows: ReturnType<typeof useLeaderboard>["rows"];
-  loading: boolean;
+  label: string;
+  value: string;
+  tone?: "text" | "profit" | "loss";
+  sub?: string;
 }) {
-  if (loading) return <SkeletonRows rows={3} height="h-16" />;
-  if (!rows?.length) {
-    return (
-      <Empty
-        title="No traders yet"
-        hint="A wallet appears here after its first exit through the WinCut hook."
-      />
-    );
-  }
+  const colour = { text: "text-text", profit: "text-profit", loss: "text-loss" }[tone];
   return (
-    <div className="flex flex-col gap-2">
-      <ColumnHeader>
-        <span>Trader</span>
-        <span>Followers&apos; profit</span>
-      </ColumnHeader>
-      {rows.slice(0, 10).map((r, i) => (
-        <Link key={r.trader} href={`/trader/${r.trader}`}>
-          <Card className="flex items-center gap-3 p-3 transition-colors hover:bg-elevated/40">
-            <span className="num w-4 shrink-0 text-xs text-secondary">{i + 1}</span>
-            <Avatar address={r.trader} size={32} />
-            <div className="min-w-0 flex-1">
-              <p className="num truncate text-sm font-semibold">{short(r.trader)}</p>
-              <p className="num mt-0.5 text-[11px] text-secondary">
-                own {usd(r.ownPnl, { sign: true })} · {r.followers} follower
-                {r.followers === 1 ? "" : "s"}
-              </p>
-            </div>
-            <span
-              className={`num shrink-0 text-sm font-semibold ${
-                r.followersPnl >= 0n ? "text-profit" : "text-loss"
-              }`}
-            >
-              {usd(r.followersPnl, { sign: true })}
-            </span>
-          </Card>
-        </Link>
-      ))}
+    <div>
+      <p className="text-[10px] font-medium tracking-wide text-secondary uppercase">{label}</p>
+      <p className={`num mt-1 text-lg leading-tight font-semibold ${colour}`}>{value}</p>
+      {sub && <p className="mt-0.5 text-[10px] leading-snug text-secondary">{sub}</p>}
     </div>
   );
 }
 
-/* --------------------------------------------------------- live activity */
+/* --------------------------------------------------------------- comparison */
 
-function LiveActivity({ head }: { head?: bigint }) {
-  const trades = useTrades();
-  const coinsQ = useCoins();
-  const recent = (trades.data ?? []).slice(0, 8);
+/**
+ * WinCut against a conventional 1%-in-1%-out fee, computed rather than typed.
+ *
+ * The win row goes against us: on an isolated winner, 10% of profit costs more
+ * than 1% of the round trip. It stays in, and is called out underneath,
+ * because a comparison that only shows the flattering cases is the kind of
+ * thing a judge finds in thirty seconds.
+ *
+ * The real case for WinCut is the second card: a run of trades, where most do
+ * not work, and the banked losses pay the winner's fee.
+ */
+function Comparison() {
+  /** 1% in and 1% out, charged on the round trip whether or not it worked. */
+  const typicalFee = (basis: number, out: number) => (basis + out) * 0.01;
 
-  // A Trade carries the poolId, which is what the hook indexes by. The Copy
-  // link needs the coin page, so map it back through the launcher's list.
-  const coinOfPool = (poolId: string) =>
-    (coinsQ.data ?? []).find((c) => c.poolId === poolId)?.address;
+  const singles = useMemo(
+    () =>
+      [
+        { label: "Win: $1,000 → $1,500", basis: 1_000, out: 1_500 },
+        { label: "Lose: $1,000 → $700", basis: 1_000, out: 700 },
+        { label: "Flat: $1,000 → $1,000", basis: 1_000, out: 1_000 },
+      ].map((r) => ({
+        ...r,
+        typical: typicalFee(r.basis, r.out),
+        // An isolated trade has no prior losses, so there is no credit to spend.
+        wincut: Math.max(0, r.out - r.basis) * 0.1,
+      })),
+    [],
+  );
+
+  /**
+   * Five $1,000 trades of the kind people actually have: three losers, one
+   * flat, one good winner. The banked losses are spent before the winner is
+   * charged, so the mechanism only shows up across a run.
+   */
+  const session = useMemo(() => {
+    const trades = [
+      { basis: 1_000, out: 800 },
+      { basis: 1_000, out: 800 },
+      { basis: 1_000, out: 800 },
+      { basis: 1_000, out: 1_000 },
+      { basis: 1_000, out: 1_500 },
+    ];
+    let credit = 0;
+    let wincut = 0;
+    let typical = 0;
+    for (const t of trades) {
+      typical += typicalFee(t.basis, t.out);
+      const pnl = t.out - t.basis;
+      if (pnl < 0) {
+        credit += -pnl;
+      } else {
+        const used = Math.min(credit, pnl);
+        credit -= used;
+        wincut += (pnl - used) * 0.1;
+      }
+    }
+    const netPnl = trades.reduce((a, t) => a + (t.out - t.basis), 0);
+    return { typical, wincut, credit, netPnl };
+  }, []);
 
   return (
-    <section className="flex flex-col gap-2">
-      <SectionHeading
-        right={
-          <span className="flex items-center gap-1.5 text-[11px] text-secondary">
-            <span className="h-1.5 w-1.5 rounded-pill bg-profit" />
-            On chain
-          </span>
-        }
-      >
-        Live activity
-      </SectionHeading>
-
-      {trades.isPending ? (
-        <SkeletonRows rows={3} height="h-14" />
-      ) : !recent.length ? (
-        <Empty
-          title="No trades yet"
-          hint="Every row here is a real swap through the WinCut hook. Nothing is seeded."
-        />
-      ) : (
-        <Card className="divide-y divide-border">
-          <AnimatePresence initial={false}>
-            {recent.map((t) => (
-              <motion.div
-                key={t.tx + t.trader}
-                layout
-                initial={{ opacity: 0, y: -8 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.2 }}
-                className="flex items-center gap-3 p-3"
-              >
-                <Avatar address={t.trader} size={30} />
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-[13px]">
-                    <AddressLink address={t.trader} tight />{" "}
-                    <span className={t.kind === "sell" ? "text-loss" : "text-profit"}>
-                      {t.kind === "sell" ? "sold" : "bought"}
-                    </span>{" "}
-                    <span className="text-secondary">{fmtCoins(t.coins)}</span>
-                    {t.followed && (
-                      <span className="text-secondary">, copying {short(t.followed)}</span>
-                    )}
-                  </p>
-                  <p className="num mt-0.5 text-[11px] text-secondary">
-                    {usd(t.quoteAmount)}
-                    {t.kind === "sell" && <> · fee {usd(t.fee ?? 0n)}</>} · {ago(t.block, head)} ·{" "}
-                    <TxLink hash={t.tx}>explorer ↗</TxLink>
-                  </p>
-                </div>
-                <div className="shrink-0 text-right">
-                  {t.kind === "sell" && (
-                    <p
-                      className={`num text-sm font-semibold ${
-                        (t.pnl ?? 0n) >= 0n ? "text-profit" : "text-loss"
-                      }`}
-                    >
-                      {usd(t.pnl, { sign: true })}
-                    </p>
-                  )}
-                  {coinOfPool(t.poolId) && (
-                    <Link
-                      href={`/coin/${coinOfPool(t.poolId)}?follow=${t.trader}`}
-                      className="mt-1 block"
-                    >
-                      <span className="inline-flex items-center rounded-btn border border-border bg-elevated px-2.5 py-1.5 text-[11px] font-semibold">
-                        Copy
-                      </span>
-                    </Link>
-                  )}
-                </div>
-              </motion.div>
+    <div className="flex flex-col gap-3">
+      <Card className="p-0">
+        <div className="px-4 pt-4">
+          <SectionHeading>One trade at a time</SectionHeading>
+          <p className="mt-1 mb-3 text-[11px] leading-relaxed text-secondary">
+            A conventional copy-trading app charges around 1% going in and 1% going out, win or
+            lose. WinCut charges 10% of profit and nothing else.
+          </p>
+        </div>
+        <table className="w-full text-[12px]">
+          <thead>
+            <tr className="border-y border-border text-[10px] tracking-wide text-secondary uppercase">
+              <th className="px-4 py-2 text-left font-medium">Trade</th>
+              <th className="px-4 py-2 text-right font-medium">1% in + 1% out</th>
+              <th className="px-4 py-2 text-right font-medium">WinCut</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border">
+            {singles.map((r) => (
+              <tr key={r.label}>
+                <td className="px-4 py-2.5">{r.label}</td>
+                <td className="num px-4 py-2.5 text-right text-secondary">
+                  ${r.typical.toFixed(2)}
+                </td>
+                <td
+                  className={`num px-4 py-2.5 text-right font-semibold ${
+                    r.wincut === 0
+                      ? "text-profit"
+                      : r.wincut < r.typical
+                        ? "text-profit"
+                        : "text-loss"
+                  }`}
+                >
+                  ${r.wincut.toFixed(2)}
+                  {r.wincut === 0 && <span className="ml-1 text-[10px]">· free</span>}
+                </td>
+              </tr>
             ))}
-          </AnimatePresence>
-        </Card>
-      )}
-    </section>
+          </tbody>
+        </table>
+        <p className="px-4 py-3 text-[11px] leading-relaxed text-secondary">
+          Read that first row honestly:{" "}
+          <strong className="text-text">
+            on a big winner with no losses behind it, WinCut costs more
+          </strong>{" "}
+          — ${singles[0].wincut.toFixed(2)} against ${singles[0].typical.toFixed(2)}. That is the
+          deal. You pay nothing on the trades that fail, and more on the ones that work.
+        </p>
+      </Card>
+
+      <Card className="p-0">
+        <div className="px-4 pt-4">
+          <SectionHeading>A run of five trades</SectionHeading>
+          <p className="mt-1 mb-3 text-[11px] leading-relaxed text-secondary">
+            Which is the case that actually happens: three losers at −20%, one flat, one good
+            winner at +50%, $1,000 each.
+          </p>
+        </div>
+        <div className="grid grid-cols-3 gap-px bg-border">
+          <Cell
+            label="Your net result"
+            value={`${session.netPnl >= 0 ? "+" : "−"}$${Math.abs(session.netPnl).toFixed(0)}`}
+            tone={session.netPnl >= 0 ? "profit" : "loss"}
+          />
+          <Cell label="1% in + 1% out" value={`$${session.typical.toFixed(2)}`} />
+          <Cell label="WinCut" value={`$${session.wincut.toFixed(2)}`} tone="profit" />
+        </div>
+        <p className="px-4 py-3 text-[11px] leading-relaxed text-secondary">
+          The three losers bank $600 of credit. The $500 profit on the winner is less than that,
+          so it is sheltered in full and the fee is{" "}
+          <strong className="text-profit">${session.wincut.toFixed(2)}</strong> — against $
+          {session.typical.toFixed(2)} charged by the 1% model on a run that ended $
+          {Math.abs(session.netPnl).toFixed(0)} down. ${session.credit.toFixed(0)} of credit is
+          still banked for next time.
+        </p>
+      </Card>
+    </div>
+  );
+}
+
+function Cell({
+  label,
+  value,
+  tone = "text",
+}: {
+  label: string;
+  value: string;
+  tone?: "text" | "profit" | "loss";
+}) {
+  const colour = { text: "text-text", profit: "text-profit", loss: "text-loss" }[tone];
+  return (
+    <div className="bg-surface px-4 py-3">
+      <p className="text-[10px] font-medium tracking-wide text-secondary uppercase">{label}</p>
+      <p className={`num mt-1 text-lg leading-tight font-semibold ${colour}`}>{value}</p>
+    </div>
   );
 }

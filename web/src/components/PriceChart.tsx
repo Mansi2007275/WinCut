@@ -1,188 +1,388 @@
 "use client";
 
+/**
+ * The price chart: real OHLCV candles from GeckoTerminal, with the user's own
+ * position drawn on top.
+ *
+ * Three things are overlaid, and each one answers a question the user actually
+ * has while looking at a price:
+ *
+ *   - entry line - what they paid, so "am I up?" is a glance, not a calculation
+ *   - break-even line - the price a sale would come back flat at once Rhea's
+ *     pool fee is paid, which is a different and more useful number than entry
+ *   - markers - where their own buys and sells happened
+ *
+ * The candles come from GeckoTerminal's pool OHLCV. The entry, break-even and
+ * markers come from the WinCut contract. Nothing here is synthesised.
+ */
+
 import {
-  AreaSeries,
-  ColorType,
+  CandlestickSeries,
+  HistogramSeries,
   createChart,
+  createSeriesMarkers,
   LineStyle,
   type IChartApi,
   type ISeriesApi,
+  type ISeriesMarkersPluginApi,
+  type IPriceLine,
+  type Time,
   type UTCTimestamp,
 } from "lightweight-charts";
-import { useEffect, useMemo, useRef } from "react";
-import type { PricePoint } from "@/lib/data";
-import { price as fmtPrice } from "@/lib/format";
-import { Skeleton } from "./ui";
+import { useEffect, useMemo, useRef, useState } from "react";
 
-export type Timeframe = "1H" | "1D" | "1W" | "ALL";
+import type { Candle, GtSide, TimeframeKey } from "@/lib/gecko";
+import { TIMEFRAME_KEYS } from "@/lib/gecko";
+import type { Trade } from "@/lib/contract";
+import { price as fmtPrice, pct, toNumber, usdCompact } from "@/lib/format";
+import { USDC_DECIMALS } from "@/lib/near";
+import { Card, Segmented, Skeleton } from "./ui";
 
-export const TIMEFRAMES: Timeframe[] = ["1H", "1D", "1W", "ALL"];
+/** Matches globals.css. Kept in sync by hand because the chart is a canvas. */
+const COLOR = {
+  bg: "transparent",
+  text: "#8a929c",
+  grid: "#1b2027",
+  border: "#22272e",
+  up: "#16c784",
+  down: "#ea3943",
+  accent: "#3b82f6",
+  volumeUp: "rgba(22, 199, 132, 0.28)",
+  volumeDown: "rgba(234, 57, 67, 0.28)",
+} as const;
 
-const WINDOW_SECONDS: Record<Timeframe, number | null> = {
-  "1H": 3600,
-  "1D": 86_400,
-  "1W": 604_800,
-  ALL: null,
+export type ChartOverlay = {
+  /** USDC per whole token the user paid. */
+  entryPrice?: number;
+  /** Price a sale would break even at, pool fee included. */
+  breakEvenPrice?: number;
+  /** The user's own trades in this token, for markers. */
+  trades?: Trade[];
+  tokenDecimals: number;
 };
 
-/// Trims the series to a timeframe using the points' own timestamps. A window
-/// with nothing in it falls back to the whole series rather than drawing an
-/// empty box, because "no trades in the last hour" is not "no price".
-export function windowed(series: PricePoint[] | undefined, tf: Timeframe): PricePoint[] {
-  if (!series?.length) return [];
-  const span = WINDOW_SECONDS[tf];
-  if (span === null) return series;
-  const newest = series.at(-1)?.time;
-  if (newest === undefined) return series;
-  const cut = newest - span;
-  const slice = series.filter((p) => (p.time ?? 0) >= cut);
-  return slice.length >= 2 ? slice : series;
-}
+type Hover = { candle: Candle; changePct: number } | null;
 
-/**
- * Price history, drawn from the pool's own Swap events.
- *
- * Each point is the price a trade actually executed at, from the hook's own
- * Bought and Sold events. The PoolManager's post-swap mid-price would be the
- * better number, but its logs cover every pool on Arc and neither the index
- * nor the RPC will serve them, so that chart was simply blank. A last-traded
- * price series is what most exchanges plot, and the caption says which it is.
- *
- * A one-point series is still drawn: a coin that has been launched but never
- * traded does have a price, and an empty box implies the chart is broken.
- */
 export function PriceChart({
-  series,
+  candles,
   loading,
-  height = 180,
-  onHover,
+  error,
+  timeframe,
+  onTimeframe,
+  symbol,
+  overlay,
+  side,
 }: {
-  series?: PricePoint[];
-  loading?: boolean;
-  height?: number;
-  /// Fired with the price under the crosshair, and with undefined when the
-  /// pointer leaves, so the big price above can follow it.
-  onHover?: (price: number | undefined) => void;
+  candles: Candle[] | undefined;
+  loading: boolean;
+  error: string | null;
+  timeframe: TimeframeKey;
+  onTimeframe: (tf: TimeframeKey) => void;
+  symbol: string;
+  overlay: ChartOverlay;
+  side: GtSide | undefined;
 }) {
-  const box = useRef<HTMLDivElement | null>(null);
-  const chart = useRef<IChartApi | null>(null);
-  const area = useRef<ISeriesApi<"Area"> | null>(null);
-  // Held in a ref so changing the handler never tears the chart down.
-  const hover = useRef(onHover);
-  hover.current = onHover;
+  const holder = useRef<HTMLDivElement | null>(null);
+  const chartRef = useRef<IChartApi | null>(null);
+  const candleRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
+  const volumeRef = useRef<ISeriesApi<"Histogram"> | null>(null);
+  const markersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
+  const linesRef = useRef<IPriceLine[]>([]);
+  const [hover, setHover] = useState<Hover>(null);
+  /** Set once the user pans or zooms, so a poll never yanks the view back. */
+  const userMoved = useRef(false);
 
-  const data = useMemo(() => {
-    if (!series?.length) return [];
-    // lightweight-charts needs strictly increasing, unique times. Several
-    // swaps can land in one block, so later ones are nudged a second on to
-    // keep their order without pretending to know a finer timestamp.
-    let last = -1;
-    return series
-      .filter((p) => p.time !== undefined)
-      .map((p) => {
-        const t = Math.max(p.time!, last + 1);
-        last = t;
-        return { time: t as UTCTimestamp, value: p.price };
-      });
-  }, [series]);
-
-  const up = data.length < 2 || data[data.length - 1].value >= data[0].value;
-  const stroke = up ? "#16C784" : "#EA3943";
-
+  // --- create the chart once -------------------------------------------------
   useEffect(() => {
-    const el = box.current;
+    const el = holder.current;
     if (!el) return;
 
-    const c = createChart(el, {
-      height,
-      // autoSize rather than a hand-rolled ResizeObserver: calling
-      // applyOptions({width}) from inside an observer on the same element
-      // resizes the canvas, which refires the observer, which resizes again.
-      // That feedback loop pinned the renderer hard enough that screenshotting
-      // the page timed out.
-      autoSize: true,
+    const chart = createChart(el, {
       layout: {
-        background: { type: ColorType.Solid, color: "transparent" },
-        textColor: "#8A929C",
-        fontFamily: "inherit",
-        attributionLogo: true,
+        background: { color: COLOR.bg },
+        textColor: COLOR.text,
+        fontFamily: "var(--font-inter), ui-sans-serif, system-ui, sans-serif",
+        fontSize: 11,
+        attributionLogo: false,
       },
-      grid: { vertLines: { visible: false }, horzLines: { visible: false } },
-      rightPriceScale: { visible: false },
-      leftPriceScale: { visible: false },
-      timeScale: { visible: false, fixLeftEdge: true, fixRightEdge: true },
-      handleScroll: false,
-      handleScale: false,
+      grid: {
+        vertLines: { color: COLOR.grid, style: LineStyle.Solid },
+        horzLines: { color: COLOR.grid, style: LineStyle.Solid },
+      },
+      rightPriceScale: { borderColor: COLOR.border, scaleMargins: { top: 0.08, bottom: 0.26 } },
+      timeScale: {
+        borderColor: COLOR.border,
+        timeVisible: true,
+        secondsVisible: false,
+        rightOffset: 4,
+      },
       crosshair: {
-        vertLine: { color: "#22272E", width: 1, style: LineStyle.Solid, labelVisible: false },
-        horzLine: { visible: false, labelVisible: false },
+        mode: 1,
+        vertLine: { color: COLOR.text, width: 1, style: LineStyle.Dotted, labelBackgroundColor: "#1b2027" },
+        horzLine: { color: COLOR.text, width: 1, style: LineStyle.Dotted, labelBackgroundColor: "#1b2027" },
       },
+      handleScale: { axisPressedMouseMove: { time: true, price: false } },
+      autoSize: true,
     });
-    chart.current = c;
 
-    const s = c.addSeries(AreaSeries, {
-      lineColor: stroke,
-      topColor: `${stroke}44`,
-      bottomColor: `${stroke}00`,
-      lineWidth: 2,
-      priceLineVisible: false,
+    const candleSeries = chart.addSeries(CandlestickSeries, {
+      upColor: COLOR.up,
+      downColor: COLOR.down,
+      borderUpColor: COLOR.up,
+      borderDownColor: COLOR.down,
+      wickUpColor: COLOR.up,
+      wickDownColor: COLOR.down,
+      priceFormat: { type: "price", precision: 8, minMove: 0.00000001 },
+    });
+
+    // Volume shares the pane but gets its own invisible scale, pinned to the
+    // bottom quarter so it never fights the price for vertical room.
+    const volumeSeries = chart.addSeries(HistogramSeries, {
+      priceScaleId: "volume",
+      priceFormat: { type: "volume" },
       lastValueVisible: false,
-      crosshairMarkerRadius: 4,
-      crosshairMarkerBorderColor: stroke,
-      crosshairMarkerBackgroundColor: "#0B0E11",
+      priceLineVisible: false,
     });
-    area.current = s;
+    chart.priceScale("volume").applyOptions({
+      scaleMargins: { top: 0.8, bottom: 0 },
+      visible: false,
+    });
 
-    c.subscribeCrosshairMove((param) => {
-      const point = param.seriesData.get(s) as { value?: number } | undefined;
-      hover.current?.(point?.value);
+    chartRef.current = chart;
+    candleRef.current = candleSeries;
+    volumeRef.current = volumeSeries;
+    markersRef.current = createSeriesMarkers(candleSeries, []);
+
+    chart.subscribeCrosshairMove((param) => {
+      const data = param.seriesData.get(candleSeries) as Candle | undefined;
+      if (!data || param.time === undefined) {
+        setHover(null);
+        return;
+      }
+      setHover({
+        candle: data,
+        changePct: data.open ? ((data.close - data.open) / data.open) * 100 : 0,
+      });
     });
+
+    const timeScale = chart.timeScale();
+    const onRangeChange = () => {
+      userMoved.current = true;
+    };
+    timeScale.subscribeVisibleLogicalRangeChange(onRangeChange);
 
     return () => {
-      c.remove();
-      chart.current = null;
-      area.current = null;
+      timeScale.unsubscribeVisibleLogicalRangeChange(onRangeChange);
+      chart.remove();
+      chartRef.current = null;
+      candleRef.current = null;
+      volumeRef.current = null;
+      markersRef.current = null;
+      linesRef.current = [];
     };
-    // The chart instance is created once per mount. Colour and data updates
-    // are applied below rather than by rebuilding it, which would restart the
-    // draw-in on every refetch.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [height]);
+  }, []);
+
+  // Switching timeframe is a deliberate reset, so the view may snap again.
+  useEffect(() => {
+    userMoved.current = false;
+  }, [timeframe]);
+
+  // --- feed it data ---------------------------------------------------------
+  useEffect(() => {
+    const series = candleRef.current;
+    const volume = volumeRef.current;
+    if (!series || !volume || !candles?.length) return;
+
+    series.setData(
+      candles.map((c) => ({
+        time: c.time as UTCTimestamp,
+        open: c.open,
+        high: c.high,
+        low: c.low,
+        close: c.close,
+      })),
+    );
+    volume.setData(
+      candles.map((c) => ({
+        time: c.time as UTCTimestamp,
+        value: c.volume,
+        color: c.close >= c.open ? COLOR.volumeUp : COLOR.volumeDown,
+      })),
+    );
+
+    // Pick a price precision from the data: a memecoin at 1e-9 and wNEAR at
+    // $2.40 cannot share one setting, and two decimals would flatten the
+    // memecoin into a straight line.
+    const last = candles[candles.length - 1].close;
+    const digits = last >= 1 ? 4 : last >= 0.001 ? 6 : 12;
+    series.applyOptions({
+      priceFormat: { type: "price", precision: digits, minMove: 10 ** -digits },
+    });
+
+    if (!userMoved.current) chartRef.current?.timeScale().fitContent();
+  }, [candles]);
+
+  // --- the user's own position, drawn over the top --------------------------
+  useEffect(() => {
+    const series = candleRef.current;
+    if (!series) return;
+
+    for (const line of linesRef.current) series.removePriceLine(line);
+    linesRef.current = [];
+
+    const add = (value: number | undefined, title: string, color: string, style: LineStyle) => {
+      if (value === undefined || !Number.isFinite(value) || value <= 0) return;
+      linesRef.current.push(
+        series.createPriceLine({
+          price: value,
+          color,
+          lineWidth: 1,
+          lineStyle: style,
+          axisLabelVisible: true,
+          title,
+        }),
+      );
+    };
+
+    add(overlay.entryPrice, "your entry", COLOR.accent, LineStyle.Dashed);
+    add(overlay.breakEvenPrice, "break even", COLOR.text, LineStyle.Dotted);
+  }, [overlay.entryPrice, overlay.breakEvenPrice]);
 
   useEffect(() => {
-    if (!area.current) return;
-    area.current.applyOptions({
-      lineColor: stroke,
-      topColor: `${stroke}44`,
-      bottomColor: `${stroke}00`,
-      crosshairMarkerBorderColor: stroke,
-    });
-    area.current.setData(data);
-    chart.current?.timeScale().fitContent();
-  }, [data, stroke]);
+    const plugin = markersRef.current;
+    if (!plugin) return;
+    const trades = overlay.trades ?? [];
+    plugin.setMarkers(
+      trades
+        .map((t) => {
+          const seconds = Math.floor(Number(BigInt(t.timestamp) / 1_000_000_000n));
+          const buy = t.side === "Buy";
+          const usdc = toNumber(t.usdc, USDC_DECIMALS);
+          return {
+            time: seconds as UTCTimestamp,
+            position: buy ? ("belowBar" as const) : ("aboveBar" as const),
+            color: buy ? COLOR.accent : t.pnl?.negative ? COLOR.down : COLOR.up,
+            shape: buy ? ("arrowUp" as const) : ("arrowDown" as const),
+            text: `${buy ? "buy" : "sell"} ${usdCompact(usdc)}`,
+            size: 1,
+          };
+        })
+        .sort((a, b) => (a.time as number) - (b.time as number)),
+    );
+  }, [overlay.trades]);
 
-  const empty = !series?.length;
+  const header = useMemo(() => {
+    const shown = hover?.candle ?? (candles?.length ? candles[candles.length - 1] : undefined);
+    if (!shown) return null;
+    const change = shown.open ? ((shown.close - shown.open) / shown.open) * 100 : 0;
+    return { candle: shown, change };
+  }, [hover, candles]);
 
-  // The container is ALWAYS rendered. Returning a skeleton instead of it while
-  // the series loads left `box.current` null when the mount effect ran, so
-  // createChart was never called and the chart never appeared once the data
-  // arrived -- which is every time, because the data always arrives after the
-  // first paint. The loading and empty states are drawn over the container
-  // rather than in place of it.
   return (
-    <div
-      className="relative w-full overflow-hidden rounded-card border border-border bg-surface"
-      style={{ height }}
-      onPointerLeave={() => hover.current?.(undefined)}
-      role="img"
-      aria-label={`Price history, latest ${fmtPrice(series?.at(-1)?.price ?? 0)}`}
-    >
-      <div ref={box} className="absolute inset-0" />
-      {empty && (
-        <div className="absolute inset-0 flex items-center justify-center text-xs text-secondary">
-          {loading ? <Skeleton className="h-full w-full" /> : "No swaps recorded yet"}
+    <Card className="flex flex-col overflow-hidden p-0">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border px-3 py-2">
+        <div className="flex items-baseline gap-2">
+          <span className="text-[13px] font-semibold">{symbol}</span>
+          <span className="text-[10px] tracking-wide text-secondary uppercase">USD</span>
         </div>
-      )}
-    </div>
+
+        {header ? (
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]">
+            <OHLC label="O" value={header.candle.open} />
+            <OHLC label="H" value={header.candle.high} />
+            <OHLC label="L" value={header.candle.low} />
+            <OHLC label="C" value={header.candle.close} />
+            <span className={header.change >= 0 ? "num text-profit" : "num text-loss"}>
+              {pct(header.change)}
+            </span>
+            <span className="num text-secondary">
+              vol {usdCompact(header.candle.volume)}
+            </span>
+          </div>
+        ) : (
+          <Skeleton className="h-3 w-56" />
+        )}
+
+        <div className="ml-auto">
+          <Segmented
+            options={TIMEFRAME_KEYS.map((k) => ({ id: k, label: k }))}
+            value={timeframe}
+            onChange={onTimeframe}
+          />
+        </div>
+      </div>
+
+      <div className="relative">
+        <div ref={holder} className="h-[340px] w-full sm:h-[420px]" />
+
+        {(loading || error || (!candles?.length && side)) && (
+          <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-bg/70">
+            {error ? (
+              <div className="pointer-events-auto max-w-xs px-4 text-center">
+                <p className="text-xs font-semibold text-loss">No candles right now</p>
+                <p className="mt-1 text-[11px] leading-relaxed text-secondary">{error}</p>
+                <p className="mt-1 text-[11px] text-secondary">
+                  Price, depth and your position below are read from Rhea and WinCut directly, so
+                  they are unaffected.
+                </p>
+              </div>
+            ) : loading ? (
+              <p className="text-xs text-secondary">Loading candles…</p>
+            ) : (
+              <p className="max-w-xs px-4 text-center text-[11px] leading-relaxed text-secondary">
+                GeckoTerminal has no candles indexed for this pool yet. It is a real pool with real
+                liquidity - it just has not traded enough to produce a chart.
+              </p>
+            )}
+          </div>
+        )}
+      </div>
+
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-border px-3 py-2 text-[10px] text-secondary">
+        {overlay.entryPrice !== undefined && Number.isFinite(overlay.entryPrice) && (
+          <Legend color={COLOR.accent} dashed>
+            your entry {fmtPrice(overlay.entryPrice)}
+          </Legend>
+        )}
+        {overlay.breakEvenPrice !== undefined && Number.isFinite(overlay.breakEvenPrice) && (
+          <Legend color={COLOR.text} dashed>
+            break even {fmtPrice(overlay.breakEvenPrice)}
+          </Legend>
+        )}
+        {(overlay.trades?.length ?? 0) > 0 && (
+          <Legend color={COLOR.up}>{overlay.trades!.length} of your trades marked</Legend>
+        )}
+        <span className="ml-auto">candles: GeckoTerminal · overlays: WinCut contract</span>
+      </div>
+    </Card>
+  );
+}
+
+function OHLC({ label, value }: { label: string; value: number }) {
+  return (
+    <span className="text-secondary">
+      {label} <span className="num text-text">{fmtPrice(value)}</span>
+    </span>
+  );
+}
+
+function Legend({
+  color,
+  dashed,
+  children,
+}: {
+  color: string;
+  dashed?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <span
+        aria-hidden
+        className="inline-block h-0 w-4"
+        style={{ borderTop: `1px ${dashed ? "dashed" : "solid"} ${color}` }}
+      />
+      <span className="num">{children}</span>
+    </span>
   );
 }
