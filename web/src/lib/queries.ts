@@ -21,6 +21,7 @@ import { useCallback, useMemo } from "react";
 import markets from "@/config/markets.json";
 import * as contract from "./contract";
 import type { TokenConfig } from "./contract";
+import * as agentLib from "./agent";
 import * as gecko from "./gecko";
 import * as rhea from "./rhea";
 import {
@@ -547,4 +548,30 @@ export function useRefreshAfterTrade(accountId: string | null) {
     const timers = [2_500, 6_000, 12_000].map((ms) => setTimeout(invalidate, ms));
     return () => timers.forEach(clearTimeout);
   }, [qc, accountId]);
+}
+
+// ------------------------------------------------------------------ the agent
+
+/**
+ * The agent's decision log.
+ *
+ * Polled on the same five-minute cadence the agent decides on, plus a little
+ * slack, so a page left open stays current without asking far more often than
+ * the thing it is watching can change.
+ */
+export function useAgentLog(enabled = true, limit = 40) {
+  return useQuery<agentLib.AgentLog>({
+    queryKey: ["agent-log", limit],
+    queryFn: async ({ signal }) => {
+      const res = await fetch(`/api/agent/log?limit=${limit}`, { signal, cache: "no-store" });
+      const body = await res.json();
+      if (!res.ok) {
+        throw new Error(body?.detail ?? body?.error ?? `agent log responded ${res.status}`);
+      }
+      return body as agentLib.AgentLog;
+    },
+    enabled: enabled && Boolean(agentLib.AGENT_ACCOUNT_ID),
+    refetchInterval: 60_000,
+    retry: 1,
+  });
 }

@@ -1,0 +1,126 @@
+/**
+ * Everything the agent reads from its environment, and the limits it cannot
+ * talk its way out of.
+ *
+ * The risk limits are deliberately here rather than in the prompt. A limit
+ * written into a prompt is a request: the model can misread it, round it,
+ * ignore it under pressure from its own reasoning, or be talked out of it by
+ * whatever it just read from the chain. A limit written here is arithmetic the
+ * model never touches - its answer is a proposal, and `risk.ts` is what decides
+ * whether that proposal becomes a transaction.
+ */
+
+export type Network = "testnet" | "mainnet";
+
+const env = (k: string, fallback?: string): string => {
+  const v = process.env[k]?.trim();
+  if (v) return v;
+  if (fallback !== undefined) return fallback;
+  throw new Error(`${k} is required - see agent/README.md`);
+};
+
+const optional = (k: string): string | undefined => {
+  const v = process.env[k]?.trim();
+  return v ? v : undefined;
+};
+
+export const NETWORK = (optional("NEAR_NETWORK") ?? "testnet") as Network;
+
+export const RPC_URL =
+  optional("NEAR_RPC_URL") ??
+  (NETWORK === "mainnet" ? "https://free.rpc.fastnear.com" : "https://test.rpc.fastnear.com");
+
+/** The WinCut contract the agent trades through. */
+export const CONTRACT_ID = env(
+  "WINCUT_CONTRACT_ID",
+  NETWORK === "testnet" ? "wincut-mansi.testnet" : "",
+);
+
+/** The agent's own account. Conventionally a sub-account of the contract's. */
+export const AGENT_ACCOUNT_ID = env(
+  "AGENT_ACCOUNT_ID",
+  NETWORK === "testnet" ? `agent.${CONTRACT_ID}` : "",
+);
+
+/**
+ * The function-call key. It can call `buy` and `sell` on the WinCut contract
+ * and nothing else - not `withdraw`, not `claim`, not a transfer. See the
+ * README for the command that creates it.
+ */
+export const AGENT_PRIVATE_KEY = optional("AGENT_PRIVATE_KEY");
+
+/** When true the agent decides and logs but never signs. */
+export const DRY_RUN = process.env.DRY_RUN === "1" || process.argv.includes("--dry");
+
+/** One pass and exit, rather than looping. */
+export const RUN_ONCE = process.argv.includes("--once");
+
+export const LOOP_MS = Number(optional("AGENT_LOOP_MS") ?? 5 * 60_000);
+
+// ------------------------------------------------------------------- the LLM
+
+/** NEAR AI Cloud, or anything else that speaks the OpenAI chat completions API. */
+export const LLM_BASE_URL = optional("NEAR_AI_BASE_URL") ?? "https://api.near.ai/v1";
+export const LLM_MODEL = optional("NEAR_AI_MODEL") ?? "deepseek-v3";
+export const LLM_API_KEY = optional("NEAR_AI_API_KEY");
+
+// ------------------------------------------------------------------- storage
+
+export const UPSTASH_URL = optional("UPSTASH_REDIS_REST_URL");
+export const UPSTASH_TOKEN = optional("UPSTASH_REDIS_REST_TOKEN");
+
+/** Where the web app reads candles from, for the agent's own market view. */
+export const WEB_BASE_URL = optional("WINCUT_WEB_URL") ?? "https://wincut.vercel.app";
+
+// --------------------------------------------------------------------- risk
+
+/**
+ * Hard limits. Every one of these is checked in code after the model answers.
+ * None of them is negotiable by the model, and exceeding one turns a trade
+ * into a HOLD with the reason recorded.
+ */
+export const RISK = {
+  /** Share of the agent's WinCut balance a single buy may spend. */
+  maxShareOfBalancePerTrade: 0.2,
+  /** Positions open at once. A fourth idea has to wait for an exit. */
+  maxOpenPositions: 3,
+  /** Unrealised loss that forces a sell, regardless of what the model thinks. */
+  stopLossPct: -8,
+  /** Unrealised gain that takes the win, likewise. */
+  takeProfitPct: 12,
+  /** Trades in a rolling 24 hours. */
+  maxTradesPerDay: 12,
+  /** Never put up a position smaller than this; dust is not a trade. */
+  minTradeUsdc: 1,
+} as const;
+
+export const USDC_DECIMALS = 6;
+
+/** Gas for a trade. The contract itself requires at least 170 Tgas. */
+export const TRADE_GAS = 250_000_000_000_000n;
+
+/** Slippage the agent accepts on its own market orders. */
+export const SLIPPAGE_BPS = 100;
+
+export function describeConfig(): string {
+  return [
+    `network   ${NETWORK}`,
+    `contract  ${CONTRACT_ID}`,
+    `agent     ${AGENT_ACCOUNT_ID}`,
+    `rpc       ${RPC_URL}`,
+    `brain     ${LLM_API_KEY ? `${LLM_MODEL} via ${LLM_BASE_URL}` : "deterministic fallback (no NEAR_AI_API_KEY)"}`,
+    `storage   ${UPSTASH_URL ? "upstash" : "in-memory only (no UPSTASH_REDIS_REST_URL)"}`,
+    `mode      ${DRY_RUN ? "DRY RUN - decides and logs, never signs" : "live"}`,
+  ].join("\n");
+}
+
+/** Rhea/Ref Finance classic AMM, which holds the pools WinCut routes through. */
+export const REF_CONTRACT =
+  optional("REF_CONTRACT") ?? (NETWORK === "mainnet" ? "v2.ref-finance.near" : "ref-finance-101.testnet");
+
+/** The quote token: native USDC on mainnet, thUSDC on testnet. */
+export const USDC_ID =
+  optional("USDC_ID") ??
+  (NETWORK === "mainnet"
+    ? "17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1"
+    : "thusdc.testnet");

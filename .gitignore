@@ -17,3 +17,7 @@ web/.next/
 .anvil.log
 /tmp/
 .vercel
+
+# agent
+agent/.env
+agent/node_modules/

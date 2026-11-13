@@ -13,10 +13,12 @@ import { use, useState } from "react";
 import Link from "next/link";
 
 import { Page } from "@/components/Shell";
+import { AgentKeyNote, AgentReasoning } from "@/components/AgentPanel";
 import { TradeList } from "@/components/TradeTabs";
-import { Avatar, Card, Empty, SectionHeading, SkeletonRows, StatTile, Tabs } from "@/components/ui";
+import { Avatar, Badge, Card, Empty, SectionHeading, SkeletonRows, StatTile, Tabs } from "@/components/ui";
 import { NeedsContract } from "@/components/Gate";
-import { useCopyFeed, useMyTrades, useTrader } from "@/lib/queries";
+import { useAgentLog, useCopyFeed, useMyTrades, useTrader } from "@/lib/queries";
+import { isAgent } from "@/lib/agent";
 import { useWallet } from "@/lib/wallet";
 import { copyLink } from "@/lib/referral";
 import { explorerAccount } from "@/lib/explorer";
@@ -34,6 +36,8 @@ function TraderBody({ accountId }: { accountId: string }) {
   const trader = useTrader(accountId);
   const own = useMyTrades(accountId, 100);
   const copied = useCopyFeed(accountId, 100);
+  const agent = isAgent(accountId);
+  const agentLog = useAgentLog(agent);
   const [tab, setTab] = useState<"own" | "copied">("own");
   const [copiedLink, setCopiedLink] = useState(false);
 
@@ -46,7 +50,10 @@ function TraderBody({ accountId }: { accountId: string }) {
       <header className="flex flex-wrap items-center gap-3">
         <Avatar address={accountId} size={44} />
         <div className="min-w-0 flex-1">
-          <h1 className="num truncate text-lg leading-tight font-semibold">{accountId}</h1>
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="num truncate text-lg leading-tight font-semibold">{accountId}</h1>
+            {agent && <Badge tone="accent">AI Agent</Badge>}
+          </div>
           <a
             href={explorerAccount(accountId)}
             target="_blank"
@@ -65,6 +72,21 @@ function TraderBody({ accountId }: { accountId: string }) {
           </Link>
         )}
       </header>
+
+      {agent && (
+        <>
+          <Card className="p-3">
+            <p className="text-[11px] leading-relaxed text-secondary">
+              Nobody picks these trades. This account runs on a five-minute loop that reads the
+              chain, decides, and records what it decided - the reasoning behind every entry is
+              below. Its results are read from the contract exactly as any other trader&rsquo;s
+              are, and copying it carries the same risk as copying a person, with none of a
+              person&rsquo;s judgement about when a market has stopped making sense.
+            </p>
+          </Card>
+          <AgentKeyNote />
+        </>
+      )}
 
       {!isDeployed ? null : trader.isPending ? (
         <SkeletonRows rows={1} height="h-20" />
@@ -102,6 +124,14 @@ function TraderBody({ accountId }: { accountId: string }) {
             the contract - there is simply nothing yet.
           </p>
         </Card>
+      )}
+
+      {agent && (
+        <AgentReasoning
+          log={agentLog.data}
+          isPending={agentLog.isPending}
+          error={agentLog.error as Error | null}
+        />
       )}
 
       <Card className="p-3">
