@@ -1,0 +1,191 @@
+/**
+ * What the bots are, and why they exist at all.
+ *
+ * Testnet has no traders. The pools sit untouched for days, so a price series
+ * read from them is a flat line, and a chart of a flat line looks broken even
+ * though it is perfectly accurate. There are two ways to fix that. One is to
+ * generate plausible-looking candles, which is lying. The other is to make real
+ * trading happen on a real pool, which is what this package does: every price
+ * these bots produce is the price a real on-chain swap actually executed at.
+ *
+ * The honest part is the labelling, not the data. Everything here is disclosed
+ * on the site: the pool is WinCut's own, its price is steered toward mainnet
+ * NEAR by our own market maker, and the three traders are our bots and are
+ * marked as such on the leaderboard. Nobody should mistake this for an
+ * independent market, because it is not one - it is a real market with a known
+ * operator, which is a different thing from a fake one.
+ *
+ * Why its own token. The obvious design would peg a wNEAR/thUSDC pool to the
+ * real NEAR price, and it does not work: a pool at $3.49 per NEAR needs wNEAR
+ * and thUSDC in a 1:3.49 ratio, so the wNEAR side is the binding constraint and
+ * a faucet's worth of test NEAR buys only a pool a few dollars deep. Any trade
+ * big enough to see would empty it. A token we mint ourselves has no such
+ * limit: we can put the depth entirely on the quote side, which is the side we
+ * can actually obtain, and choose the ratio that makes one MNEAR worth one real
+ * NEAR.
+ */
+
+export type Network = "testnet" | "mainnet";
+
+const env = (k: string, fallback?: string): string => {
+  const v = process.env[k]?.trim();
+  if (v) return v;
+  if (fallback !== undefined) return fallback;
+  throw new Error(`${k} is required - see bots/README.md`);
+};
+
+const optional = (k: string): string | undefined => {
+  const v = process.env[k]?.trim();
+  return v ? v : undefined;
+};
+
+export const NETWORK = (optional("NEAR_NETWORK") ?? "testnet") as Network;
+
+export const RPC_URL = optional("NEAR_RPC_URL") ?? "https://test.rpc.fastnear.com";
+
+/** Mainnet, read-only, purely to learn what NEAR is actually worth. */
+export const MAINNET_RPC_URL = optional("NEAR_MAINNET_RPC_URL") ?? "https://free.rpc.fastnear.com";
+
+export const CONTRACT_ID = env("WINCUT_CONTRACT_ID", "wincut-mansi.testnet");
+export const REF_CONTRACT = env("REF_CONTRACT", "ref-finance-101.testnet");
+export const USDC_ID = env("USDC_ID", "thusdc.testnet");
+export const USDC_DECIMALS = 6;
+
+/** The token the bots trade. Minted by us, so its ratio is ours to choose. */
+export const MIRROR_TOKEN_ID = env("MIRROR_TOKEN_ID", "mnear.tkn.primitives.testnet");
+export const MIRROR_SYMBOL = env("MIRROR_SYMBOL", "MNEAR");
+export const MIRROR_DECIMALS = Number(optional("MIRROR_DECIMALS") ?? 24);
+
+/** The pool the market maker keeps pegged. Set after `add_simple_pool`. */
+export const MIRROR_POOL_ID = Number(env("MIRROR_POOL_ID", "0"));
+
+// ------------------------------------------------------------------ the peg
+
+/**
+ * Where the real NEAR price comes from: the deepest wNEAR/USDC pool on mainnet
+ * Rhea, read over plain RPC. Not a price API - the same kind of source the app
+ * itself uses, so there is one fewer thing that can quietly start lying.
+ */
+export const PEG = {
+  mainnetRef: "v2.ref-finance.near",
+  poolId: 4512,
+  wnear: "wrap.near",
+  usdc: "17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1",
+  usdcDecimals: 6,
+  wnearDecimals: 24,
+} as const;
+
+/**
+ * How far the pool may drift from the peg before the market maker corrects it.
+ *
+ * Not zero. A market maker that corrects every basis point would flatten the
+ * chart into the very straight line this package exists to avoid, and would
+ * burn gas doing it. The band is what leaves room for the traders to actually
+ * move the price.
+ */
+export const PEG_BAND_PCT = Number(optional("PEG_BAND_PCT") ?? 0.6);
+
+/** Fraction of the gap the market maker closes when it does act. */
+export const PEG_CORRECTION = Number(optional("PEG_CORRECTION") ?? 0.6);
+
+/** Largest single correction, in quote units, so a bad read cannot drain a side. */
+export const PEG_MAX_TRADE_USDC = Number(optional("PEG_MAX_TRADE_USDC") ?? 120);
+
+// --------------------------------------------------------------------- bots
+
+export type BotKind = "momentum" | "reversion" | "grid";
+
+export type BotConfig = {
+  accountId: string;
+  privateKey?: string;
+  kind: BotKind;
+  /** One line, shown on the site next to the bot's name. */
+  blurb: string;
+  /** Quote units per trade. */
+  sizeUsdc: number;
+  /** Seconds between this bot's passes. */
+  everyMs: number;
+};
+
+const botKey = (slot: number) => optional(`BOT${slot}_PRIVATE_KEY`);
+
+/**
+ * Three strategies that disagree with each other on purpose.
+ *
+ * A single strategy run three times would push the price one way and hold it
+ * there. Momentum chases a move, reversion fades it, and the grid ignores both
+ * and buys on a clock - so the three of them trade against each other, which is
+ * what a market is. None of them is trying to be profitable; they are trying to
+ * be a counterparty.
+ */
+export const BOTS: BotConfig[] = [
+  {
+    accountId: optional("BOT1_ACCOUNT_ID") ?? "momo.wincut-mansi.testnet",
+    privateKey: botKey(1),
+    kind: "momentum",
+    blurb: "Buys into a move once it has run two candles, and gets out when it stalls.",
+    sizeUsdc: Number(optional("BOT1_SIZE") ?? 12),
+    everyMs: Number(optional("BOT1_EVERY_MS") ?? 90_000),
+  },
+  {
+    accountId: optional("BOT2_ACCOUNT_ID") ?? "revert.wincut-mansi.testnet",
+    privateKey: botKey(2),
+    kind: "reversion",
+    blurb: "Fades anything that moves too far from its own short average.",
+    sizeUsdc: Number(optional("BOT2_SIZE") ?? 15),
+    everyMs: Number(optional("BOT2_EVERY_MS") ?? 120_000),
+  },
+  {
+    accountId: optional("BOT3_ACCOUNT_ID") ?? "grid.wincut-mansi.testnet",
+    privateKey: botKey(3),
+    kind: "grid",
+    blurb: "Ignores the chart. Buys a fixed size on a clock and takes profit at +3%.",
+    sizeUsdc: Number(optional("BOT3_SIZE") ?? 8),
+    everyMs: Number(optional("BOT3_EVERY_MS") ?? 150_000),
+  },
+];
+
+/** The market maker's own account. It swaps on Rhea, not through WinCut. */
+export const MM_ACCOUNT_ID = optional("MM_ACCOUNT_ID") ?? "mm.wincut-mansi.testnet";
+export const MM_PRIVATE_KEY = optional("MM_PRIVATE_KEY");
+export const MM_EVERY_MS = Number(optional("MM_EVERY_MS") ?? 60_000);
+
+// ------------------------------------------------------------------- limits
+
+/**
+ * The same reasoning as the agent: limits live in code, and a bot that would
+ * break one holds instead. These are smaller than the agent's because a bot's
+ * job is to be a counterparty, not to win.
+ */
+export const BOT_RISK = {
+  maxShareOfBalancePerTrade: 0.25,
+  minTradeUsdc: 1,
+  /** A bot stops buying below this, so it always has something left to trade. */
+  reserveUsdc: 5,
+  maxTradesPerDayEach: 400,
+} as const;
+
+export const TRADE_GAS = 250_000_000_000_000n;
+export const SWAP_GAS = 180_000_000_000_000n;
+export const SLIPPAGE_BPS = Number(optional("SLIPPAGE_BPS") ?? 150);
+
+export const DRY_RUN = process.env.DRY_RUN === "1" || process.argv.includes("--dry");
+export const RUN_ONCE = process.argv.includes("--once");
+
+export const UPSTASH_URL = optional("UPSTASH_REDIS_REST_URL");
+export const UPSTASH_TOKEN = optional("UPSTASH_REDIS_REST_TOKEN");
+
+export function describeConfig(): string {
+  return [
+    `network    ${NETWORK}`,
+    `contract   ${CONTRACT_ID}`,
+    `exchange   ${REF_CONTRACT}`,
+    `market     ${MIRROR_SYMBOL} (${MIRROR_TOKEN_ID}) pool #${MIRROR_POOL_ID || "NOT SET"}`,
+    `peg        ${PEG.mainnetRef} pool #${PEG.poolId}, band ±${PEG_BAND_PCT}%`,
+    `maker      ${MM_ACCOUNT_ID}${MM_PRIVATE_KEY ? "" : "  (no key - will not act)"}`,
+    ...BOTS.map(
+      (b) => `bot        ${b.accountId.padEnd(32)} ${b.kind}${b.privateKey ? "" : "  (no key - will not act)"}`,
+    ),
+    `mode       ${DRY_RUN ? "DRY RUN - decides and prints, never signs" : "live"}`,
+  ].join("\n");
+}

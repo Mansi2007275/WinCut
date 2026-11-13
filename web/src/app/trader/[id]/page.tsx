@@ -19,6 +19,7 @@ import { Avatar, Badge, Card, Empty, SectionHeading, SkeletonRows, StatTile, Tab
 import { NeedsContract } from "@/components/Gate";
 import { useAgentLog, useCopyFeed, useMyTrades, useTrader } from "@/lib/queries";
 import { isAgent } from "@/lib/agent";
+import { BOT_NOTE, MM_NOTE, isBot, isMarketMaker } from "@/lib/bots";
 import { useWallet } from "@/lib/wallet";
 import { copyLink } from "@/lib/referral";
 import { explorerAccount } from "@/lib/explorer";
@@ -37,6 +38,8 @@ function TraderBody({ accountId }: { accountId: string }) {
   const own = useMyTrades(accountId, 100);
   const copied = useCopyFeed(accountId, 100);
   const agent = isAgent(accountId);
+  const bot = isBot(accountId);
+  const maker = isMarketMaker(accountId);
   const agentLog = useAgentLog(agent);
   const [tab, setTab] = useState<"own" | "copied">("own");
   const [copiedLink, setCopiedLink] = useState(false);
@@ -53,6 +56,8 @@ function TraderBody({ accountId }: { accountId: string }) {
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="num truncate text-lg leading-tight font-semibold">{accountId}</h1>
             {agent && <Badge tone="accent">AI Agent</Badge>}
+            {bot && <Badge tone="neutral">Bot</Badge>}
+            {maker && <Badge tone="neutral">Market maker</Badge>}
           </div>
           <a
             href={explorerAccount(accountId)}
@@ -72,6 +77,12 @@ function TraderBody({ accountId }: { accountId: string }) {
           </Link>
         )}
       </header>
+
+      {(bot || maker) && (
+        <Card className="p-3">
+          <p className="text-[11px] leading-relaxed text-secondary">{maker ? MM_NOTE : BOT_NOTE}</p>
+        </Card>
+      )}
 
       {agent && (
         <>

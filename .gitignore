@@ -21,3 +21,7 @@ web/.next/
 # agent
 agent/.env
 agent/node_modules/
+
+# bots
+bots/.env
+bots/node_modules/

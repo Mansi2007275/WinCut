@@ -5,11 +5,11 @@
   "type": "module",
   "description": "An autonomous trader that trades through WinCut and earns only when the people copying it profit.",
   "scripts": {
-    "start": "tsx src/index.ts",
-    "once": "tsx src/index.ts --once",
-    "dry": "DRY_RUN=1 tsx src/index.ts --once",
+    "start": "node --env-file-if-exists=.env --import tsx src/index.ts",
+    "once": "node --env-file-if-exists=.env --import tsx src/index.ts --once",
+    "dry": "node --env-file-if-exists=.env --import tsx src/index.ts --once --dry",
     "typecheck": "tsc --noEmit",
-    "test": "tsx test/risk.test.ts"
+    "test": "node --import tsx test/risk.test.ts"
   },
   "dependencies": {
     "near-api-js": "7.4.0"

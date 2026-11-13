@@ -7,10 +7,11 @@ import Link from "next/link";
 import { Page } from "@/components/Shell";
 import { StatsBar } from "@/components/StatsBar";
 import { PriceChart } from "@/components/PriceChart";
+import { MIRROR_MARKET_NOTE, MIRROR_MARKET_WHY, isMirrorMarket } from "@/lib/bots";
 import { DepthPanel } from "@/components/DepthPanel";
 import { OrderPanel } from "@/components/OrderPanel";
 import { TradeTabs } from "@/components/TradeTabs";
-import { Card, Loading } from "@/components/ui";
+import { Badge, Card, Loading } from "@/components/ui";
 import { ContractNote } from "@/components/Gate";
 import {
   useCandles,
@@ -135,6 +136,16 @@ function TradeScreen({ tokenId }: { tokenId: string }) {
         stats={stats.data}
         statsError={stats.isError}
       />
+
+      {isMirrorMarket(token.token_id) && (
+        <Card className="border-accent/30 p-3">
+          <div className="flex items-start gap-2">
+            <Badge tone="accent">WinCut-operated market</Badge>
+          </div>
+          <p className="mt-1.5 text-[11px] leading-relaxed text-secondary">{MIRROR_MARKET_NOTE}</p>
+          <p className="mt-1 text-[11px] leading-relaxed text-secondary">{MIRROR_MARKET_WHY}</p>
+        </Card>
+      )}
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px_360px]">
         <div className="flex min-w-0 flex-col gap-4">
