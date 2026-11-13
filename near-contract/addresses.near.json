@@ -1,0 +1,116 @@
+{
+  "_comment": "Every id, pool and decimal below was read from NEAR mainnet by RPC view call (see scripts/verify-mainnet.mjs). Nothing here is from memory.",
+  "network": "mainnet",
+  "chain_id": "mainnet",
+  "verified_at": "2026-11-13T00:00:00Z",
+  "verified_at_block": 224250070,
+  "rpc_used": "https://free.rpc.fastnear.com",
+  "dex": {
+    "name": "Rhea Finance (formerly Ref Finance)",
+    "contract_id": "v2.ref-finance.near",
+    "verified": true,
+    "note": "`ft_metadata` is absent on the exchange (expected); verified via `version` and `get_number_of_pools`.",
+    "version": "1.9.21",
+    "number_of_pools": 9015,
+    "storage_balance_bounds": { "min": "1020000000000000000000", "max": null }
+  },
+  "usdc": {
+    "token_id": "17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1",
+    "symbol": "USDC",
+    "name": "USDC",
+    "decimals": 6,
+    "note": "Native Circle USDC on NEAR. This is the id pinned as a constant in the contract.",
+    "storage_balance_bounds": { "min": "1250000000000000000000", "max": "1250000000000000000000" }
+  },
+  "wnear": {
+    "token_id": "wrap.near",
+    "symbol": "wNEAR",
+    "name": "Wrapped NEAR fungible token",
+    "decimals": 24
+  },
+  "routing_note": "USDC has exactly one deep direct Rhea pool: USDC/wNEAR (#4512, $1.87M TVL). Every other listed token is quoted against wNEAR, so buys/sells route USDC -> wNEAR -> token in a single two-hop Rhea swap. Hops below are the verified pool ids.",
+  "tokens": [
+    {
+      "token_id": "wrap.near",
+      "symbol": "wNEAR",
+      "decimals": 24,
+      "gecko_terminal_pool": "refv1-4512",
+      "route_from_usdc": [
+        { "pool_id": 4512, "token_in": "17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1", "token_out": "wrap.near" }
+      ],
+      "pool_tvl_usd": 1864411,
+      "pool_fee_bps": 30
+    },
+    {
+      "token_id": "token.rhealab.near",
+      "symbol": "RHEA",
+      "decimals": 18,
+      "gecko_terminal_pool": "refv1-6458",
+      "route_from_usdc": [
+        { "pool_id": 4512, "token_in": "17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1", "token_out": "wrap.near" },
+        { "pool_id": 6458, "token_in": "wrap.near", "token_out": "token.rhealab.near" }
+      ],
+      "pool_tvl_usd": 780096,
+      "pool_fee_bps": 30
+    },
+    {
+      "token_id": "token.burrow.near",
+      "symbol": "BRRR",
+      "decimals": 18,
+      "gecko_terminal_pool": "refv1-3474",
+      "route_from_usdc": [
+        { "pool_id": 4512, "token_in": "17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1", "token_out": "wrap.near" },
+        { "pool_id": 3474, "token_in": "wrap.near", "token_out": "token.burrow.near" }
+      ],
+      "pool_tvl_usd": 3747,
+      "pool_fee_bps": 60,
+      "warning": "Thin pool (~$3.7k). Listed because the brief asked for BRRR; the UI shows its real depth and price impact."
+    },
+    {
+      "token_id": "blackdragon.tkn.near",
+      "symbol": "BLACKDRAGON",
+      "decimals": 24,
+      "gecko_terminal_pool": "refv1-4276",
+      "route_from_usdc": [
+        { "pool_id": 4512, "token_in": "17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1", "token_out": "wrap.near" },
+        { "pool_id": 4276, "token_in": "wrap.near", "token_out": "blackdragon.tkn.near" }
+      ],
+      "pool_tvl_usd": 37040,
+      "pool_fee_bps": 30
+    },
+    {
+      "token_id": "token.0xshitzu.near",
+      "symbol": "SHITZU",
+      "decimals": 18,
+      "gecko_terminal_pool": "refv1-4369",
+      "route_from_usdc": [
+        { "pool_id": 4512, "token_in": "17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1", "token_out": "wrap.near" },
+        { "pool_id": 4369, "token_in": "wrap.near", "token_out": "token.0xshitzu.near" }
+      ],
+      "pool_tvl_usd": 45968,
+      "pool_fee_bps": 30
+    },
+    {
+      "token_id": "token.lonkingnearbackto2024.near",
+      "symbol": "LONK",
+      "decimals": 8,
+      "gecko_terminal_pool": "refv1-4314",
+      "route_from_usdc": [
+        { "pool_id": 4512, "token_in": "17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1", "token_out": "wrap.near" },
+        { "pool_id": 4314, "token_in": "wrap.near", "token_out": "token.lonkingnearbackto2024.near" }
+      ],
+      "pool_tvl_usd": 19862,
+      "pool_fee_bps": 30
+    }
+  ],
+  "price_data": {
+    "provider": "GeckoTerminal",
+    "network": "near",
+    "dex": "rhea-finance",
+    "pool_id_scheme": "refv1-<rhea classic pool id>",
+    "ohlcv": "https://api.geckoterminal.com/api/v2/networks/near/pools/{pool}/ohlcv/{minute|hour|day}?aggregate=N",
+    "rate_limit": "~30 req/min unauthenticated - the app proxies and caches it server-side in a Next.js route handler"
+  },
+  "explorer": "https://nearblocks.io",
+  "nep145_storage_deposit_per_token_yocto": "1250000000000000000000"
+}
