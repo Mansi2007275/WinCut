@@ -267,6 +267,7 @@ export function Page({
       >
         {banners && (
           <>
+            <TestnetBadge />
             <NotDeployedBanner />
             <WalletErrorBanner />
           </>
@@ -276,6 +277,26 @@ export function Page({
       <BottomNav />
       <Footer />
     </>
+  );
+}
+
+/**
+ * Says, on every screen, that these are not market prices.
+ *
+ * A testnet pool's ratio is whatever its last trader left it at - wNEAR sits
+ * near 108 tUSDC here against roughly $3.50 on mainnet. Anyone reading the
+ * numbers without that context would reasonably assume they mean something,
+ * so the app states it once per page rather than hoping they infer it.
+ */
+function TestnetBadge() {
+  if (NETWORK === "mainnet") return null;
+  return (
+    <div className="rounded-card border border-accent/30 bg-accent/10 px-3 py-2">
+      <p className="text-[11px] leading-relaxed text-primary">
+        <span className="font-semibold">NEAR testnet</span> · prices come from Rhea testnet pools,
+        not market prices.
+      </p>
+    </div>
   );
 }
 

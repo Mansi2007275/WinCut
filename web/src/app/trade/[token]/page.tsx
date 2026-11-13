@@ -15,6 +15,8 @@ import { ContractNote } from "@/components/Gate";
 import {
   useCandles,
   useLeaderboard,
+  useOnChainCandles,
+  seriesPoolFor,
   useMyTrades,
   usePoolStats,
   usePoolTrades,
@@ -27,7 +29,7 @@ import { useReferral } from "@/lib/referral";
 import { quoteRoute } from "@/lib/rhea";
 import type { TimeframeKey } from "@/lib/gecko";
 import { toNumber } from "@/lib/format";
-import { USDC_DECIMALS } from "@/lib/near";
+import { CHARTS_AVAILABLE, USDC_DECIMALS } from "@/lib/near";
 
 export default function TradePage({ params }: { params: Promise<{ token: string }> }) {
   const { token: encoded } = use(params);
@@ -56,7 +58,15 @@ function TradeScreen({ tokenId }: { tokenId: string }) {
 
   const route = useRoute(token);
   const stats = usePoolStats(token?.chart_pool, token?.token_id);
-  const candles = useCandles(token?.chart_pool, timeframe, stats.data?.side);
+
+  // Mainnet gets its candles from GeckoTerminal. Testnet has no indexer, so
+  // WinCut serves candles it folded from prices it read off the chain itself.
+  const seriesPool = seriesPoolFor(token);
+  const gtCandles = useCandles(token?.chart_pool, timeframe, stats.data?.side);
+  const onChain = useOnChainCandles(seriesPool, timeframe, !CHARTS_AVAILABLE);
+  const candles = CHARTS_AVAILABLE ? gtCandles : onChain;
+  const candleData = CHARTS_AVAILABLE ? gtCandles.data : onChain.data?.candles;
+
   const poolTrades = usePoolTrades(token?.chart_pool, stats.data?.side);
   const position = usePosition(accountId, token?.token_id);
   const myTrades = useMyTrades(accountId, 100);
@@ -129,14 +139,16 @@ function TradeScreen({ tokenId }: { tokenId: string }) {
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px_360px]">
         <div className="flex min-w-0 flex-col gap-4">
           <PriceChart
-            candles={candles.data}
-            loading={candles.isPending && !!stats.data}
+            candles={candleData}
+            loading={candles.isPending && (CHARTS_AVAILABLE ? !!stats.data : !!seriesPool)}
             error={candles.isError ? (candles.error as Error).message : null}
             timeframe={timeframe}
             onTimeframe={setTimeframe}
             symbol={token.symbol}
             overlay={overlay}
-            side={stats.data?.side}
+            side={CHARTS_AVAILABLE ? stats.data?.side : "base"}
+            collectingSince={onChain.data?.collectingSince ?? null}
+            points={onChain.data?.points ?? 0}
           />
           <div className="hidden xl:block">
             <TradeTabs token={token} followed={effectiveFollowed} />

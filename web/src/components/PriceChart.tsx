@@ -35,7 +35,7 @@ import type { Candle, GtSide, TimeframeKey } from "@/lib/gecko";
 import { TIMEFRAME_KEYS } from "@/lib/gecko";
 import type { Trade } from "@/lib/contract";
 import { price as fmtPrice, pct, toNumber, usdCompact } from "@/lib/format";
-import { CHARTS_AVAILABLE, NO_CHARTS_REASON, USDC_DECIMALS } from "@/lib/near";
+import { CHARTS_AVAILABLE, USDC_DECIMALS } from "@/lib/near";
 import { Card, Segmented, Skeleton } from "./ui";
 
 /** Matches globals.css. Kept in sync by hand because the chart is a canvas. */
@@ -72,6 +72,8 @@ export function PriceChart({
   symbol,
   overlay,
   side,
+  collectingSince = null,
+  points = 0,
 }: {
   candles: Candle[] | undefined;
   loading: boolean;
@@ -81,6 +83,10 @@ export function PriceChart({
   symbol: string;
   overlay: ChartOverlay;
   side: GtSide | undefined;
+  /** Testnet only: when WinCut started reading this pool, ISO. */
+  collectingSince?: string | null;
+  /** Testnet only: how many on-chain price points are behind these candles. */
+  points?: number;
 }) {
   const holder = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -312,19 +318,39 @@ export function PriceChart({
         </div>
       </div>
 
+      {/*
+        Testnet builds its own series, one point at a time, so early on there
+        is genuinely not much of a chart. Saying so beats drawing three candles
+        and letting them pass for a market.
+      */}
+      {!CHARTS_AVAILABLE && (candles?.length ?? 0) < 5 && !error && (
+        <div className="border-b border-border bg-elevated/40 px-3 py-2">
+          <p className="text-[11px] leading-relaxed text-secondary">
+            {collectingSince ? (
+              <>
+                Collecting on-chain data since{" "}
+                <span className="num text-primary">
+                  {new Date(collectingSince).toLocaleString()}
+                </span>
+                {points > 0 && <> · {points} price points so far</>}. Candles fill in as the pool
+                is sampled and as WinCut trades move the price.
+              </>
+            ) : (
+              <>
+                Not collecting yet. This chart is built from prices WinCut reads off the testnet
+                pool itself, because GeckoTerminal indexes mainnet only.
+              </>
+            )}
+          </p>
+        </div>
+      )}
+
       <div className="relative">
         <div ref={holder} className="h-[340px] w-full sm:h-[420px]" />
 
-        {(loading || error || !CHARTS_AVAILABLE || (!candles?.length && side)) && (
+        {(loading || error || (!candles?.length && (side || !CHARTS_AVAILABLE))) && (
           <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-bg/70">
-            {!CHARTS_AVAILABLE ? (
-              <div className="pointer-events-auto max-w-xs px-4 text-center">
-                <p className="text-xs font-semibold text-secondary">No candles on testnet</p>
-                <p className="mt-1 text-[11px] leading-relaxed text-secondary">
-                  {NO_CHARTS_REASON}
-                </p>
-              </div>
-            ) : error ? (
+            {error ? (
               <div className="pointer-events-auto max-w-xs px-4 text-center">
                 <p className="text-xs font-semibold text-loss">No candles right now</p>
                 <p className="mt-1 text-[11px] leading-relaxed text-secondary">{error}</p>
@@ -335,10 +361,15 @@ export function PriceChart({
               </div>
             ) : loading ? (
               <p className="text-xs text-secondary">Loading candles…</p>
-            ) : (
+            ) : CHARTS_AVAILABLE ? (
               <p className="max-w-xs px-4 text-center text-[11px] leading-relaxed text-secondary">
                 GeckoTerminal has no candles indexed for this pool yet. It is a real pool with real
                 liquidity - it just has not traded enough to produce a chart.
+              </p>
+            ) : (
+              <p className="max-w-xs px-4 text-center text-[11px] leading-relaxed text-secondary">
+                No price points stored for this pool yet. WinCut builds this chart by reading the
+                testnet pool itself, so the first candle appears once sampling has run.
               </p>
             )}
           </div>
@@ -359,7 +390,11 @@ export function PriceChart({
         {(overlay.trades?.length ?? 0) > 0 && (
           <Legend color={COLOR.up}>{overlay.trades!.length} of your trades marked</Legend>
         )}
-        <span className="ml-auto">candles: GeckoTerminal · overlays: WinCut contract</span>
+        <span className="ml-auto">
+          {CHARTS_AVAILABLE
+            ? "candles: GeckoTerminal · overlays: WinCut contract"
+            : "Rhea testnet pool price · on-chain · overlays: WinCut contract"}
+        </span>
       </div>
     </Card>
   );

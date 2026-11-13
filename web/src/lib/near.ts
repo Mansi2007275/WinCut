@@ -43,6 +43,19 @@ export const isDeployed = CONTRACT_ID.length > 0;
  */
 export const CHARTS_AVAILABLE = NETWORK === "mainnet";
 
+/**
+ * What a price is denominated in, and whether that thing is actually dollars.
+ *
+ * On mainnet the quote token is Circle USDC, so a price really is a dollar
+ * price and `$` is the honest symbol. On testnet the quote token is a test
+ * token whose pool ratio has nothing to do with the market - wNEAR prices at
+ * about $108 there against roughly $3.50 on mainnet. Printing `$` on those
+ * numbers would be a lie dressed as a convention, so testnet prices carry
+ * their own ticker instead.
+ */
+export const QUOTE_IS_USD = NETWORK === "mainnet";
+export const QUOTE_LABEL = QUOTE_IS_USD ? "USD" : "tUSDC";
+
 /** Why the GeckoTerminal-sourced panels are empty when they cannot work at all. */
 export const NO_CHARTS_REASON =
   "GeckoTerminal indexes NEAR mainnet only, so there are no candles, no 24h volume and no swap pressure on testnet. Price, pool depth and everything read from the WinCut contract come from the chain directly and are unaffected.";

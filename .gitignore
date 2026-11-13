@@ -4,7 +4,15 @@ contracts/broadcast/
 node_modules/
 .env
 .env.local
+.env.*.local
+.env.local.*
 .DS_Store
+
+# Signing keys. near-cli writes these to ~/.near-credentials, outside the repo,
+# but a stray copy inside it must never be committed.
+.near-credentials/
+**/.near-credentials/
+*.near-credentials*
 web/.next/
 .anvil.log
 /tmp/

@@ -6,9 +6,21 @@
  * than assuming. Nothing is ever rendered from a float that came off the wire.
  */
 
-import { USDC_DECIMALS } from "./near";
+import { QUOTE_IS_USD, QUOTE_LABEL, USDC_DECIMALS } from "./near";
 
 const EMPTY = "—";
+
+/**
+ * Wraps a formatted magnitude in the quote currency.
+ *
+ * Mainnet prices are dollars and read as `$1.23`. Testnet prices are in a test
+ * token and read as `1.23 tUSDC`, because they are not dollars and must not
+ * look like them - the ticker goes after the number so it cannot be mistaken
+ * for a currency symbol.
+ */
+function money(sign: string, body: string): string {
+  return QUOTE_IS_USD ? `${sign}$${body}` : `${sign}${body} ${QUOTE_LABEL}`;
+}
 
 /** Raw units to a JS number, for display and charting only. */
 export function toNumber(raw: bigint | string | undefined, decimals: number): number {
@@ -50,7 +62,7 @@ export function usdFromNumber(n: number, opts: { dp?: number; sign?: boolean } =
     minimumFractionDigits: dp,
     maximumFractionDigits: dp,
   });
-  return `${sign}$${body}`;
+  return money(sign, body);
 }
 
 /** Big money, compacted: $1.2M. */
@@ -58,10 +70,10 @@ export function usdCompact(n: number | undefined): string {
   if (n === undefined || !Number.isFinite(n)) return EMPTY;
   const abs = Math.abs(n);
   const sign = n < 0 ? "-" : "";
-  if (abs >= 1e9) return `${sign}$${(abs / 1e9).toFixed(2)}B`;
-  if (abs >= 1e6) return `${sign}$${(abs / 1e6).toFixed(2)}M`;
-  if (abs >= 1e3) return `${sign}$${(abs / 1e3).toFixed(1)}K`;
-  return `${sign}$${abs.toFixed(2)}`;
+  if (abs >= 1e9) return money(sign, `${(abs / 1e9).toFixed(2)}B`);
+  if (abs >= 1e6) return money(sign, `${(abs / 1e6).toFixed(2)}M`);
+  if (abs >= 1e3) return money(sign, `${(abs / 1e3).toFixed(1)}K`);
+  return money(sign, abs.toFixed(2));
 }
 
 /** Token amounts. Memecoin balances run to the billions, so they compact. */
@@ -93,7 +105,7 @@ export function price(n: number | undefined): string {
   const exp = Math.floor(Math.log10(abs));
   const zeros = -exp - 1;
   const digits = Math.round(abs * 10 ** (zeros + 4)).toString().slice(0, 4);
-  return `${n < 0 ? "-" : ""}$0.0{${zeros}}${digits}`;
+  return money(n < 0 ? "-" : "", `0.0{${zeros}}${digits}`);
 }
 
 /** Percentages, always signed, because a change of 0.00% still has a sign. */

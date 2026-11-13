@@ -340,6 +340,59 @@ export function useOnChainQuote(route: rhea.PoolSide[] | undefined, amountIn: bi
   });
 }
 
+// ------------------------------------------------- the testnet price series
+
+/**
+ * The series key for a token's chart on testnet: the pool whose price actually
+ * moves it, which is the last hop of its route. On a one-hop token that is the
+ * USDC pool; on a two-hop token it is the wNEAR pool that prices it.
+ */
+export function seriesPoolFor(token: TokenConfig | undefined): string | undefined {
+  const last = token?.hops?.[token.hops.length - 1];
+  return last ? String(last.pool_id) : undefined;
+}
+
+export type OnChainCandles = {
+  candles: gecko.Candle[];
+  points: number;
+  pointsStoredAllTime: number;
+  bySource: Record<string, number>;
+  collectingSince: string | null;
+};
+
+/**
+ * Candles that WinCut built itself from prices it read off the chain, for
+ * testnet - where GeckoTerminal has nothing to give. Same shape the mainnet
+ * path returns, so the chart does not care which one it got.
+ */
+export function useOnChainCandles(
+  poolKey: string | undefined,
+  timeframe: gecko.TimeframeKey,
+  enabled: boolean,
+) {
+  return useQuery<OnChainCandles>({
+    queryKey: ["onchain-candles", poolKey, timeframe],
+    queryFn: async ({ signal }) => {
+      const res = await fetch(
+        `/api/candles?pool=${encodeURIComponent(poolKey!)}&tf=${timeframe}`,
+        { signal, cache: "no-store" },
+      );
+      const body = await res.json();
+      if (!res.ok) throw new Error(body?.detail ?? body?.error ?? `candles responded ${res.status}`);
+      return {
+        candles: body.candles ?? [],
+        points: body.points ?? 0,
+        pointsStoredAllTime: body.pointsStoredAllTime ?? 0,
+        bySource: body.bySource ?? {},
+        collectingSince: body.collectingSince ?? null,
+      };
+    },
+    enabled: enabled && !!poolKey,
+    refetchInterval: gecko.TIMEFRAMES[timeframe]?.pollMs ?? 30_000,
+    retry: 1,
+  });
+}
+
 // ---------------------------------------------------------- GeckoTerminal
 
 export function usePoolStats(poolId: string | undefined, tokenId: string | undefined) {
