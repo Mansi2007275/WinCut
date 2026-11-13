@@ -11,7 +11,8 @@ set -euo pipefail
 
 # A non-login shell from Windows does not pick up the cargo env.
 [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
-cd "$(dirname "$0")"
+self="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+cd "$(dirname "$self")"
 
 # Keep build artefacts off the Windows mount; 9p is far too slow for a target dir.
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$HOME/.wincut-target}"
@@ -32,7 +33,7 @@ case "$cmd" in
   clippy)  cargo clippy --all-targets -- -D warnings ;;
   all)
     cargo test --message-format short
-    "$0" wasm
+    "$self" wasm
     ;;
   *) echo "unknown command: $cmd" >&2; exit 2 ;;
 esac
