@@ -5,9 +5,18 @@ from them is a flat line — and a chart of a flat line looks broken even though
 it is perfectly accurate.
 
 There were two ways to fix that. One is to generate plausible-looking candles,
-which is lying. This package is the other one: WinCut mints its own token,
-creates its own pool, and runs four accounts that make **real on-chain trades**
-in it. Every candle is a real swap at a price that really executed.
+which is lying. This package is the other one: WinCut mints its own tokens,
+creates its own pools, and runs four accounts that make **real on-chain trades**
+in them. Every candle is a real swap at a price that really executed.
+
+There are four such markets, each pegged to the live mainnet price of a real
+token: **MNEAR** (NEAR), **MDRAGON** (BLACKDRAGON), **MSHITZU** (SHITZU) and
+**MLONK** (LONK). The maker checks each peg every 60s; the three bots rotate
+through the markets one per pass, so a bot's daily trade cap still means what it
+says. Each bot also makes one trade every 3-6 minutes even when its strategy
+says HOLD, logged as a `[liquidity]` trade and disclosed as one on the site -
+otherwise a pegged market with nothing moving it produces a flat chart, which is
+accurate and useless.
 
 **The honesty is in the labelling, not the data.** The site says, wherever these
 accounts and this market appear, exactly what they are: a real market with a
@@ -238,19 +247,22 @@ directly — `ft_transfer` (no `_call`) for both thUSDC and MNEAR, amounts from
 ### 8. Configure and run
 
 ```bash
-cp .env.example .env    # fill in MIRROR_POOL_ID and the four keys
-npm run plan            # sanity-check the numbers
+cp .env.example .env    # fill in the pool ids and the four keys
+npm run plan            # sanity-check the numbers; takes symbols, e.g. npm run plan MLONK
 npm run dry             # real data, real decisions, nothing signed
 npm run bots            # the loop
 ```
 
 | Variable | Needed? | What it does |
 | --- | --- | --- |
-| `MIRROR_POOL_ID` | **yes** | From step 2. Without it the bots refuse to start. |
+| `MIRROR_POOL_ID` | **yes** | MNEAR's pool, from step 2. With no pool id at all the bots refuse to start. |
+| `MDRAGON_POOL_ID`, `MSHITZU_POOL_ID`, `MLONK_POOL_ID` | per market | The three memecoin mirrors, created the same way as step 2. A market with no pool id is skipped and named at startup, so you can add them one at a time. |
+| `NEAR_RPC_URL` | no | A single endpoint. Multiple endpoints with failover on 429/5xx come from `NEAR_RPC_URLS`, comma-separated; the default order leads with FastNEAR so `bots/` and `agent/` are not sharing one free-tier bucket. |
+| `TICK_MS` / `MM_EVERY_MS` / `VIEW_CACHE_MS` | no | Sampling cadence (35000), maker cadence per market (60000), and how long an identical view may be cached (12000). The startup line prints the resulting calls/min. |
 | `MM_PRIVATE_KEY` | for the peg | Full-access key of `mm.`. Without it the peg drifts. |
 | `BOT1_PRIVATE_KEY` … `BOT3_` | to trade | The function-call keys from step 6. |
 | `UPSTASH_REDIS_REST_URL` / `_TOKEN` | for the chart | Same database as the web app, so prices land in the series. |
-| `MIRROR_TOKEN_ID` / `_SYMBOL` / `_DECIMALS` | no | Default to MNEAR at 24 decimals. |
+| `MIRROR_TOKEN_ID` / `_SYMBOL` / `_DECIMALS` | no | MNEAR, default 24 decimals. The memecoin mirrors use `MDRAGON_TOKEN_ID` and friends, 6 decimals. |
 | `PEG_BAND_PCT` | no | Drift the maker tolerates. Default 0.6. Smaller means a flatter chart. |
 | `PEG_MAX_TRADE_USDC` | no | Cap on one correction. Default 120. |
 | `BOT1_SIZE` … , `BOT1_EVERY_MS` … | no | Per-bot trade size and cadence. |
@@ -261,7 +273,7 @@ npm run bots            # the loop
 In Vercel, so the site discloses what it is running:
 
 ```
-NEXT_PUBLIC_MIRROR_TOKEN_ID=mnear.tkn.primitives.testnet
+NEXT_PUBLIC_MIRROR_TOKENS=mnear.tkn.primitives.testnet,mdragon.tkn.primitives.testnet,mshitzu.tkn.primitives.testnet,mlonk.tkn.primitives.testnet
 NEXT_PUBLIC_MM_ACCOUNT=mm.wincut-mansi.testnet
 NEXT_PUBLIC_BOT_ACCOUNTS=momo.wincut-mansi.testnet,revert.wincut-mansi.testnet,grid.wincut-mansi.testnet
 NEXT_PUBLIC_TOKENS=mnear.tkn.primitives.testnet,wrap.testnet,…

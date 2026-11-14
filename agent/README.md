@@ -8,6 +8,9 @@ yourself in one command (see [Verifying the key](#verifying-the-key)).
 
 Every five minutes it reads the chain, decides, and writes down what it decided
 and why — including the times it decided to do nothing, which is most of them.
+It rotates across all four mirror markets (MNEAR, MDRAGON, MSHITZU, MLONK), and
+prices reach the model as scientific notation plus per-candle % moves, so a
+5.6e-9 memecoin is as readable to it as a $3 token.
 
 ---
 
@@ -124,7 +127,7 @@ Three parts of it matter:
 cd agent
 npm install
 cp .env.example .env     # then fill it in
-npm test                 # 20 checks that each hard limit actually rejects
+npm test                 # 71 checks: risk limits (34), the prompt (19), rpc failover (18)
 npm run dry              # one real decision from live data, nothing signed
 ```
 
@@ -134,10 +137,12 @@ npm run dry              # one real decision from live data, nothing signed
 | `AGENT_ACCOUNT_ID` | no | Defaults to `agent.<contract>`. |
 | `WINCUT_CONTRACT_ID` | no | Defaults to `wincut-mansi.testnet`. |
 | `NEAR_NETWORK` | no | `testnet` (default) or `mainnet`. |
-| `NEAR_RPC_URL` | no | Defaults to FastNEAR for the network. |
+| `NEAR_RPC_URLS` | no | Comma-separated endpoints, tried in order, with failover on 429/5xx and a 60s rest for whichever rate-limited. Defaults to dRPC then FastNEAR then near.org, in that order, so the agent leads with a different endpoint than `bots/` does. `NEAR_RPC_URL` still works as a single-endpoint override. |
+| `VIEW_CACHE_MS` | no | How long an identical view may be answered from cache. Defaults to 12000. |
+| `AGENT_MARKETS` | no | Comma-separated symbols the agent may trade. Defaults to the four mirror markets on testnet. Without it the agent reads every token the contract has listed, including the dead testnet ones. |
 | `NEAR_AI_API_KEY` | no | NEAR AI Cloud. Without it the momentum fallback decides, and the log says which decided. |
-| `NEAR_AI_MODEL` | no | Defaults to `deepseek-v3`. |
-| `NEAR_AI_BASE_URL` | no | Any OpenAI-compatible endpoint. Defaults to `https://api.near.ai/v1`. |
+| `NEAR_AI_MODEL` | no | Defaults to `anthropic/claude-haiku-5-5`. |
+| `NEAR_AI_BASE_URL` | no | Any OpenAI-compatible endpoint. Defaults to `https://cloud-api.near.ai/v1` — the old `api.near.ai/v1` is retired and answers 410. |
 | `UPSTASH_REDIS_REST_URL` / `_TOKEN` | for the web page | The decision log. Use the same database as the web app so `/trader/...` reads what the agent writes. |
 | `WINCUT_WEB_URL` | no | Where testnet candles are read from. Defaults to the deployed app. |
 | `AGENT_LOOP_MS` | no | Defaults to 300000 (5 minutes). |

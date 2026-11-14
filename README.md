@@ -1,68 +1,148 @@
 # WinCut
 
-**Copy trading on NEAR where the fee only ever comes out of profit.**
+**Every trading app gets paid when you lose. WinCut doesn't.**
 
-Buying is free. Selling at a loss is free, and the loss is banked as a credit that shelters your
-next win. Only a realised profit is charged — 10% of it — split with the trader you copied and
-whoever referred you. Built for the NEAR Hackathon, Unstoppable DeFi track.
+Live: **https://wincut.vercel.app** (NEAR testnet) · Demo video: _`<2-min walkthrough — link pending>`_
 
----
-
-## The fee, in one table
-
-A conventional copy-trading app takes roughly 1% going in and 1% going out, win or lose. Here is
-a run of five $1,000 trades of the kind people actually have — three losers at −20%, one flat,
-one winner at +50%:
-
-| | 1% in + 1% out | WinCut |
-|---|---|---|
-| Three −20% trades | $54.00 | **$0.00** — and $600 of credit banked |
-| One flat trade | $20.00 | **$0.00** |
-| One +50% trade | $25.00 | **$0.00** — the $500 profit is under the $600 of credit |
-| **Total on a run that ended $100 down** | **$99.00** | **$0.00** |
-
-Run the same five trades with no losers first and WinCut costs **more**: 10% of a $500 profit is
-$50 against $25 for the 1% model. That is the deal, and the landing page says so in those words.
-You pay nothing on the trades that fail and more on the ones that work.
-
-The split of any fee is 50% to the copied trader, 20% to the referrer, 30% to the protocol. An
-absent trader or referrer hands their share to the protocol — it is never charged to you twice.
+Binance and Bybit already pay lead traders only on profit. But the exchange still charges you on
+every trade, win or lose. WinCut takes the rule all the way down the stack: the platform, the
+copied trader and the referrer all earn only when **you** profit. Buying is free. Selling at a
+loss is free, and the loss is banked as a credit that shelters your next win.
 
 ---
 
-## Verified mainnet contracts
+## The fee, in two trades
 
-Every id below was read from NEAR mainnet by RPC view call at block 224,250,070, not from
-memory. `node scripts/verify-mainnet.mjs` re-checks all of them and exits non-zero on any drift.
-
-| | account | notes |
+| | $100 → $120 | $100 → $80 |
 |---|---|---|
-| **Rhea Finance** (swaps) | `v2.ref-finance.near` | classic AMM, v1.9.21 |
-| **USDC** | `17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1` | native Circle USDC, 6 decimals |
-| **wNEAR** | `wrap.near` | 24 decimals |
-| **WinCut** | *not deployed yet* | see [Deploying](#deploying) |
+| Conventional app (1% in + 1% out) | $2.20 | $1.80 |
+| **WinCut** | **$2.00** (10% of the $20 profit) | **$0.00** — and **$20 credit** banked |
 
-### Markets
+The $20 of credit shelters the next $20 of profit, so the loss has to be earned back before the
+platform earns anything. Any fee splits **50% copied trader / 20% referrer / 30% protocol**. An
+absent trader or referrer hands their share to the protocol; it is never charged to you twice.
 
-USDC has exactly one deep Rhea pool on mainnet — USDC/wNEAR, #4512. Everything else is quoted
-against wNEAR, so trades route **USDC → wNEAR → token** as one two-hop Rhea swap.
+Honest trade-off: a user who only ever wins pays more here than 1%-in-1%-out. The landing page
+says so in those words.
 
-| token | account | dec | route | usable liquidity |
+---
+
+## Screenshots
+
+_Pending: `docs/img/trade.png`, `docs/img/dashboard.png`, `docs/img/agent.png`._
+
+---
+
+## Why it can't be gamed
+
+- **The contract holds the position, not the user.** Tokens land in the contract's own account
+  under a position record (amount, cost basis, copied trader, referrer). No method moves a
+  token out. **Only USDC withdraws** — `withdraw` and `claim` touch the USDC ledger only — so a
+  position cannot be smuggled out to dodge settlement.
+- **One pure function decides the fee.** [`math::settle_sell`](near-contract/src/math.rs) is the
+  whole rule, and `quote_sell_fee` is a view running that same function: the fee shown before
+  you sign is the fee charged.
+- **The AI agent cannot touch funds.** Its key is read live from chain:
+
+```bash
+near account list-keys agent.wincut-mansi.testnet network-config testnet now
+```
+
+| public key | permission | receiver | methods | allowance |
 |---|---|---|---|---|
-| wNEAR | `wrap.near` | 24 | #4512 | ~$1.88M |
-| RHEA | `token.rhealab.near` | 18 | #4512 → #6458 | ~$778K |
-| SHITZU | `token.0xshitzu.near` | 18 | #4512 → #4369 | ~$47K |
-| BLACKDRAGON | `blackdragon.tkn.near` | 24 | #4512 → #4276 | ~$37K |
-| LONK | `token.lonkingnearbackto2024.near` | 8 | #4512 → #4314 | ~$20K |
-| BRRR | `token.burrow.near` | 18 | #4512 → #3474 | **~$4.5K** |
+| `ed25519:CXC42ZPC…` | FunctionCall | `wincut-mansi.testnet` | `buy`, `sell` | 1.94 / 2 NEAR |
+| `ed25519:DzCtqezk…` | FullAccess | — | — | — |
 
-"Usable liquidity" is the *thinnest* pool on the route, not the first. Every route starts at the
-deep USDC/wNEAR pool, so reporting the first hop would claim $1.88M for all six. BRRR and LONK
-carry a thin-pool badge in the UI for this reason.
+The agent process holds **only** the first key — its public key derives from `agent/.env` and
+matches `CXC42ZPC…`. The second is the operator's, kept offline in `~/.near-credentials`,
+because a NEAR account cannot be created without one. So: no `withdraw`, no `claim`, no
+`ft_transfer`, and no attached deposit — a function-call key cannot attach NEAR at all.
 
-Two things differ from what you might expect: there is no RHEA token at a `ref-finance` id — the
-live one is `token.rhealab.near`, while `token.v2.ref-finance.near` is still the old REF token.
-And no listed token except wNEAR has a direct USDC pool.
+---
+
+## The AI agent
+
+A separate Node process ([`agent/`](agent/)) that reads the chain, decides, and signs with that
+restricted key.
+
+- **Brain:** NEAR AI Cloud (`anthropic/claude-haiku-5-5` via `https://cloud-api.near.ai/v1`).
+  It is given each market's price, candle-by-candle **% moves** (so a 5.6e-9 memecoin reads the
+  same as a $3 token), depth, its own balance and open positions.
+- **Hard limits in code, not in the prompt** ([`agent/src/risk.ts`](agent/src/risk.ts)): 20% of
+  balance per trade, **1.5% of pool depth** per trade, 3 open positions, −8% stop loss, +12%
+  take profit, 12 trades per rolling day. The risk layer **trims** an oversized buy to the
+  binding cap rather than refusing it, and names which cap bound it.
+- **Deterministic fallback:** with no API key, or when the model errors, a momentum rule decides
+  instead. The log says which one acted on every pass, every time.
+- The stop loss is not decoration: the agent is currently **−38.09 tUSDC** across 23 trades and
+  13 losses. Those numbers are below, unedited.
+
+---
+
+## Why NEAR, and why this is a business
+
+**Why NEAR:** function-call access keys are what make this design auditable — "the agent may
+call exactly `buy` and `sell` on exactly this contract, with at most 2 NEAR of gas" is one
+on-chain object a judge can read, not a promise in a README. Plus sub-second finality, gas in
+tenths of a cent, one deep AMM to route through, and NEAR Intents for USDC bridged from
+Ethereum, Base, Arbitrum or Solana.
+
+**Why it is a business:** 10% of realised profit is a *higher* take-rate on winning volume than
+1%-in-1%-out, so this is a bet that fee-free losses buy more winning volume than they cost. A
+banked credit is a reason to come back, because leaving abandons it. The trader's 50% is an
+acquisition budget paid only on results. And credits, cost bases and copy relationships are
+contract state, so a fork starts at zero.
+
+---
+
+## The testnet market is operated, and says so
+
+Every number on the site is real on-chain data from NEAR **testnet**. Testnet has no liquid
+market, so WinCut runs one, and the UI discloses it on every affected panel.
+
+| market | pool | mirrors (mainnet) | peg source | depth |
+|---|---|---|---|---|
+| MNEAR | #2961 | NEAR | `wrap.near` via #4512 | ~993 tUSDC |
+| MDRAGON | #2963 | BLACKDRAGON `blackdragon.tkn.near` | #4512 → #4276 | ~402 tUSDC |
+| MSHITZU | #2964 | SHITZU `token.0xshitzu.near` | #4512 → #4369 | ~402 tUSDC |
+| MLONK | #2965 | LONK `token.lonkingnearbackto2024.near` | #4512 → #4314 | ~421 tUSDC |
+
+A market maker reads the **live mainnet price** of each real token every 60s and swaps against
+the testnet pool to hold it within ±0.6%. Three strategy bots (momentum, mean-reversion, grid)
+and the AI agent trade into those pools. Every trade is a real signed transaction through a real
+AMM, and every chart point came from a pool read this system performed. Mirror prices track
+mainnet; **mirror liquidity does not**.
+
+Mainnet ids, pools and decimals are each verified by RPC view call in
+[`addresses.near.json`](near-contract/addresses.near.json) (block 224,250,070;
+`node scripts/verify-mainnet.mjs` re-checks and exits non-zero on drift). Switching over is one
+env var: `NEXT_PUBLIC_NETWORK=mainnet`.
+
+---
+
+## Live audit numbers
+
+Read from chain while writing this, on 2026-11-14. Reproduce any row with the view call named.
+
+| | value | how |
+|---|---|---|
+| Settled trades | **223** (137 buys, 86 sells) | `get_config.total_trades` |
+| Notional through the ring | **2,763.85 tUSDC** | `get_recent_trades` |
+| Losing sells | **76** | `get_recent_trades` |
+| **Losing sells charged a fee** | **0** | every one has `fee: "0"` |
+| Profitable sells | **11** | `get_recent_trades` |
+| Fees charged, all time | **0.00 tUSDC** | every profit so far was smaller than that account's banked credit |
+| Loss credit banked | **87.13 tUSDC** | `get_loss_credit` |
+| Contract holds | **1,106.27 tUSDC** | `thusdc.testnet.ft_balance_of(wincut-mansi.testnet)` |
+| Contract owes | **1,106.27 tUSDC** | `get_usdc_accounted` |
+| Surplus / shortfall | **0.00 / 0** | the two above, and `get_config.shortfall_usdc` |
+
+Loss credit per account: `agent` 38.09, `revert` 21.16, `grid` 16.52, `momo` 11.36.
+
+The zero-fee row is the thesis running live: 76 losses cost nothing and banked 87 tUSDC of
+credit, and all 11 wins since were smaller than that credit, so the platform has earned
+**nothing** here — exactly what the rule says should happen to a market that is down. The
+claimable ledger reads `"0"` for every account, the protocol included.
 
 ---
 
@@ -70,228 +150,116 @@ And no listed token except wNEAR has a direct USDC pool.
 
 ```mermaid
 flowchart TB
-    subgraph user["You"]
-      W["Wallet<br/>HOT · Meteor · MyNearWallet"]
-      X["USDC on Ethereum,<br/>Base, Arbitrum, Solana…"]
-    end
-
-    subgraph wincut["WinCut contract"]
-      B["Internal USDC balances"]
-      P["Positions<br/>amount · cost basis · copied trader · referrer"]
-      C["Loss credit<br/>global per user, no expiry"]
-      L["Claimable ledger<br/>trader · referrer · protocol"]
-      S["settle_sell<br/>one pure function"]
-    end
-
-    subgraph ext["On chain"]
-      R["Rhea v2.ref-finance.near"]
-      I["NEAR Intents 1Click"]
-      U["USDC nep141"]
-    end
-
-    G["GeckoTerminal<br/>candles only"]
-
-    X -->|"bridge"| I
-    I -->|"ft_transfer_call<br/>deposit_for"| B
-    W -->|"ft_transfer_call deposit"| B
-    B -->|"buy: 0% fee"| R
-    R -->|"tokens"| P
-    P -->|"sell"| R
-    R -->|"USDC proceeds"| S
-    S -->|"loss: 0% fee"| C
-    S -->|"profit − credit, ×10%"| L
-    S -->|"proceeds − fee"| B
-    B -->|"withdraw"| W
-    L -->|"claim"| W
-    G -.->|"chart"| W
-    U -.-> B
-
-    classDef free fill:#0f2a20,stroke:#16c784,color:#e6e8eb
-    class C free
+  subgraph you["You"]
+    W["Wallet · Meteor / HOT / MyNearWallet"]
+    X["USDC on Ethereum, Base, Arbitrum, Solana"]
+  end
+  subgraph wincut["WinCut contract (one account)"]
+    B["Internal USDC balances"]
+    P["Positions · amount, cost basis, trader, referrer"]
+    C["Loss credit · per user, no expiry"]
+    L["Claimable · trader / referrer / protocol"]
+    S["settle_sell · the whole fee rule, pure"]
+  end
+  subgraph ext["On chain"]
+    R["Rhea AMM"]
+    I["NEAR Intents 1Click"]
+  end
+  subgraph ops["Operated market (testnet only)"]
+    M["Maker · pegs to live mainnet price"]
+    T["3 bots + AI agent · restricted key"]
+  end
+  X -->|bridge| I --> B
+  W -->|ft_transfer_call| B
+  B -->|"buy · 0% fee"| R --> P
+  P -->|sell| R -->|proceeds| S
+  S -->|"loss · 0% fee"| C
+  S -->|"(profit − credit) × 10%"| L
+  S -->|"proceeds − fee"| B
+  B -->|withdraw| W
+  L -->|claim| W
+  M --> R
+  T -->|buy / sell| B
 ```
 
-### The rules the contract enforces
+A sell measures its own proceeds: Rhea's instant swap reports only how much *input* it used, so
+the contract tracks what it ought to hold, takes a global lock, and reads the real balance two
+blocks later — the payout receipt is queued on the token's shard strictly before that read. Every
+failure path (refused swap, partial fill, bounce, unmeasurable proceeds, missing callback) ends
+with the user whole and has a test; `release_stale_lock()` is public after five minutes.
 
-All of it lives in one pure function, [`math::settle_sell`](near-contract/src/math.rs):
+---
 
-```
-basis_part = cost_basis × sell_amount / position_amount
-pnl        = proceeds − basis_part
+## Proof on chain
 
-pnl < 0  →  fee = 0, and loss_credit += −pnl
-pnl ≥ 0  →  used = min(loss_credit, pnl)
-            loss_credit −= used
-            fee = (pnl − used) × 10%
-            fee splits 50 trader / 20 referrer / 30 protocol
-```
-
-`quote_sell_fee` is a view that runs that same function, so the fee the order panel shows before
-you sign is the fee that gets charged — the only difference being slippage between the quote and
-the fill.
-
-Every intermediate widens to 256 bits. `cost_basis × sell_amount` for a 24-decimal token is
-around 1e43, and u128 stops at 3.4e38.
-
-### How a swap's output is attributed
-
-Rhea's instant swap does not report how much came out — `ft_transfer_call` only returns how much
-of the *input* was used. So the output is measured rather than reported:
-
-1. the contract tracks exactly how much of each token it ought to hold
-2. a global lock keeps one settlement in flight at a time
-3. the callback asks the token for the real balance, and the difference is the output
-
-The measuring read is deliberately a **second** round trip. Rhea's payout receipt is created
-while its `ft_on_transfer` runs, so it is queued on the token's shard strictly before the
-`ft_balance_of` this contract sends two blocks later, and shards drain their queues in order.
-By the time the balance is read, the payout has always landed.
-
-That same lock also covers `withdraw` and `claim`: a payout in flight would move the very USDC
-balance a sell settlement is about to measure.
-
-### Failure paths
-
-Every one ends with the user whole, and each has a test:
-
-| what went wrong | what happens |
+| | link |
 |---|---|
-| Rhea refuses the swap | full USDC refund to the internal balance, lock released |
-| Rhea fills only part of it | the remainder is refunded, the basis is what was actually spent |
-| a sell's swap bounces | the position is untouched and nothing is charged |
-| proceeds cannot be measured | the sale is abandoned, no fee, position intact |
-| filled but the output never arrives | the user is refunded from protocol funds, the gap is recorded for `sweep_rhea` |
-| a callback never runs | `release_stale_lock()` is callable by anyone after five minutes |
+| Contract (223 trades, every receipt) | [`wincut-mansi.testnet`](https://testnet.nearblocks.io/address/wincut-mansi.testnet) |
+| AI agent (restricted key, 23 trades) | [`agent.wincut-mansi.testnet`](https://testnet.nearblocks.io/address/agent.wincut-mansi.testnet) |
+| Market maker (the peg swaps) | [`mm.wincut-mansi.testnet`](https://testnet.nearblocks.io/address/mm.wincut-mansi.testnet) |
+| Bots | [`momo`](https://testnet.nearblocks.io/address/momo.wincut-mansi.testnet) · [`revert`](https://testnet.nearblocks.io/address/revert.wincut-mansi.testnet) · [`grid`](https://testnet.nearblocks.io/address/grid.wincut-mansi.testnet) |
+| The AMM the swaps cross | [`ref-finance-101.testnet`](https://testnet.nearblocks.io/address/ref-finance-101.testnet) |
+
+A losing sell to read for yourself: trade id 142, `agent` selling MSHITZU at **−16.64 tUSDC**,
+`fee: "0"`, credit banked. `get_recent_trades` returns it.
 
 ---
 
-## Running it
+## Tests and running it
 
-You need Node 20+ and Rust with the `wasm32-unknown-unknown` target.
+Node 20+, and Rust with `wasm32-unknown-unknown` for the contract.
 
 ```bash
-git clone https://github.com/Mansi2007275/WinCut && cd WinCut
+node scripts/verify-mainnet.mjs          # every mainnet id/pool still as claimed
 
-# 1. check every mainnet id and pool is still what the repo claims
-node scripts/verify-mainnet.mjs
+cd near-contract && cargo test           # 60 tests (settle_sell, every failure path)
+wsl -d Ubuntu -- bash near-contract/build.sh all   # Windows without MSVC
 
-# 2. the contract
-cd near-contract
-cargo test                       # 60 tests
-cargo build --release --target wasm32-unknown-unknown
-cd ..
+cd agent && npm test                     # 71 tests — risk 34, prompt 19, rpc 18
+cd bots  && npm test                     # 18 tests — rpc failover and cache
 
-# 3. the app
-cd web
-cp .env.example .env.local       # fill in NEXT_PUBLIC_CONTRACT_ID once deployed
-npm install
-npm run dev                      # http://localhost:4000
+cd web && cp .env.example .env.local && npm install && npm run dev   # :4000
+cd bots  && npm run bots                 # maker + 3 bots, all 4 markets
+cd agent && npm start                    # DRY_RUN=1 to decide without signing
 ```
 
-Without a contract id the app still shows live prices, pool depth and charts for all six
-markets — those come from Rhea and GeckoTerminal and need no WinCut. Balances, positions, fees
-and trading say plainly that they need a deployment.
-
-On Windows without the MSVC build tools there is no host linker, so `cargo` cannot build.
-`near-contract/build.sh` runs the whole toolchain inside WSL instead:
-
-```bash
-wsl -d Ubuntu -- bash near-contract/build.sh all     # test + wasm
-```
-
----
-
-## Deploying
-
-WinCut never asks for your key. This prints every command for you to run yourself:
-
-```bash
-node scripts/print-deploy-commands.mjs wincut.youraccount.near youraccount.near
-```
-
-It generates the `cargo-near` and `near-cli-rs` sequence from the verified addresses file, so
-the pool ids baked into each `list_token` call are the ones that were checked on chain. The
-steps are: create the sub-account, build reproducibly, deploy with `new`, register the contract
-on USDC, `list_token` each of the six markets, then `register_token` each one — which pays the
-NEP-145 storage on both the token and Rhea and is what makes it tradable.
-
-Budget about 6 NEAR for the sub-account and 0.05 NEAR per token registration.
-
----
-
-## Where every number comes from
-
-Three sources, and nothing else. There is no mock data anywhere in the UI, and no fallback that
-invents a number when a source is unavailable — screens say what is missing instead.
-
-| shown | source |
-|---|---|
-| price, pool depth, price impact, "you receive" | Rhea pool reserves, read live |
-| the quote confirmed before signing | Rhea `get_return` |
-| candles, 24h change, 24h volume, swap pressure | GeckoTerminal (`refv1-<pool id>`) |
-| balance, position, cost basis, loss credit, earnings | WinCut contract |
-| the exact fee a sell will charge | WinCut `quote_sell_fee` |
-| block height, gas price | NEAR RPC |
-
-The trade screen cross-checks the two independent prices it has — the live pool mid against
-GeckoTerminal's indexed one — and tells you when they disagree by more than a quarter rather
-than quietly picking one. GeckoTerminal is proxied through a cached route handler; its ~30
-requests a minute would not survive one browser polling candles, let alone several viewers.
-
----
+`bots/README.md` and `agent/README.md` cover the keys, env and the one-step-at-a-time
+`near-cli-rs` commands for creating a mirror market.
 
 ## Known limitations
 
-Worth reading before the demo, because they are all deliberate.
-
-- **One settlement at a time, protocol-wide.** The balance-delta attribution needs a global
-  lock, so while somebody's trade is settling (about five blocks) another is refused with a
-  clear message. The fix is Rhea's non-instant `swap`, which returns the exact output amount and
-  would remove the need to measure at all; it costs an extra round trip and was not worth it
-  before the deadline.
-- **Market orders only.** A limit order needs a keeper watching the pool between blocks.
-- **Copying is attribution, not mirroring.** Naming a trader credits them with a share of your
-  profit fee. It does not place their trades for you — that would need standing permission over
-  your balance.
-- **The last 500 trades are on chain.** Older ones are in the NEP-297 event log, readable by any
-  indexer, but the contract stops storing them so its state cannot grow without bound.
-- **`get_leaderboard` reads the whole trader map** and sorts in the view. Fine at this size,
-  wrong at ten thousand traders.
-- **BRRR is a ~$4.5K pool.** It is listed because the brief asked for it. The depth ladder shows
-  exactly what each size would fill at, so a bad price is visible before signing.
-- **Bridged deposits land in your NEAR wallet by default.** Delivering straight into the WinCut
-  balance uses 1Click's `customRecipientMsg`, which its own documentation calls highly
-  experimental, so it is opt-in.
-- **Not audited.** It is hackathon code with 60 tests and real money on mainnet. Trade small.
-
-## What has and has not been exercised on mainnet
-
-Honest status, because "it works end to end" should mean something:
-
-- **Verified against mainnet:** every contract id, pool id and decimal; live prices for all six
-  markets cross-checked against GeckoTerminal; the depth ladder; candles across all six
-  timeframes; the 1Click quote endpoint ($25 on Base → 24.995 USDC on NEAR, ~35s).
-- **Verified in tests only:** the full buy and sell settlement, the fee split, loss-credit
-  banking and consumption, and every failure path — 60 unit tests against a simulated VM.
-- **Not yet run on mainnet:** signing an actual buy or sell, because that needs the contract
-  deployed from your account and real USDC. The deploy commands above are the remaining step.
+- **One settlement at a time, protocol-wide.** The lock refuses a concurrent trade for ~5 blocks
+  with a clear message. Rhea's non-instant `swap` returns the exact output and would remove the
+  measuring entirely, at the cost of a round trip.
+- **The maker drains on a trend.** It sells the base token when the pool is rich and buys when
+  it is cheap, so a sustained mainnet rally empties its base inventory and the peg drifts up
+  until it is topped up. Right now MLONK is **+10.1%** and MNEAR **+1.4%** off peg for exactly
+  that reason — the maker holds 0 MLONK and 0 wNEAR. The log reports the drift every minute
+  rather than hiding it, and the UI shows the pool price, not the peg.
+- **Market orders only**, and **copying is attribution, not mirroring** — naming a trader pays
+  them a share of your profit fee, it does not place their trades for you.
+- **Last 500 trades on chain**, older ones in the NEP-297 event log, so state cannot grow
+  unbounded. `get_leaderboard` sorts the whole trader map in a view — fine here, wrong at 10k.
+- **Mainnet buys and sells have never been signed.** The contract is deployed and exercised on
+  testnet only. Every mainnet id is verified; nothing mainnet has been traded.
+- **Not audited.** Hackathon code, 60 contract tests plus 89 in the off-chain packages.
 
 ---
 
 ## Layout
 
 ```
-near-contract/      Rust contract (near-sdk 5.30), 60 tests
-  src/math.rs         settle_sell — the whole fee rule, pure and tested
-  src/trading.rs      buy, sell, and the settlement callbacks
-  src/ft.rs           deposits, withdrawals, claims
-  addresses.near.json every verified mainnet id, with the block it was read at
-web/                Next.js 15, Tailwind 4, lightweight-charts
-  src/lib/rhea.ts     pool maths: quotes, depth, mid price
-  src/lib/contract.ts every contract view the UI reads
-  src/lib/intents.ts  1Click cross-chain deposits
-scripts/            verify-mainnet.mjs, print-deploy-commands.mjs
-legacy-arc/         the previous Uniswap v4 build on Arc, kept for history
-docs/DEMO.md        a two-minute demo script
+near-contract/   Rust, near-sdk 5.30, 60 tests · src/math.rs is the fee rule
+web/             Next.js 15 · /trade, /dashboard ("The Cut Field"), /agent
+bots/            market maker + momentum/mean-reversion/grid bots, 4 markets
+agent/           the AI trader: NEAR AI Cloud brain, risk layer, restricted key
+scripts/         verify-mainnet.mjs, print-deploy-commands.mjs
+legacy-arc/      the earlier Uniswap v4 hook build on Arc, kept for history
+docs/DEMO.md     two-minute demo script
 ```
+
+Originally prototyped as a Uniswap v4 hook on Arc, then rebuilt for NEAR — the fee rule needed
+to live in an account that custodies positions and keeps per-user credit, which is a contract,
+not a hook. The Arc work is in [`legacy-arc/`](legacy-arc/).
 
 MIT.
