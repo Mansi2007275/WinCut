@@ -89,25 +89,75 @@ export type BotDecision = {
   sizeUsdc?: number;
   sellFraction?: number;
   reason: string;
+  /**
+   * True when the trade came from the clock rather than from the strategy.
+   *
+   * It is carried through to the log and the site because the two are not the
+   * same kind of thing: one is a bot acting on what it read, the other is a bot
+   * trading because the market had gone quiet. Presenting a timed trade as a
+   * strategy decision would credit the strategy with an opinion it never had.
+   */
+  liquidity?: boolean;
 };
 
 type BotState = {
-  /** Set by the grid bot so it can space its buys out on a clock. */
-  lastBuyAt?: number;
+  /** The last trade of any kind, which is also the grid bot's clock. */
+  lastTradeAt?: number;
+  /** Which way that trade went, so the grid can alternate. */
+  lastSide?: "BUY" | "SELL";
+  /** When this bot is next allowed to trade purely to keep the market moving. */
+  nextLiquidityAt?: number;
   tradesToday: number;
   dayStartedAt: number;
 };
+
+/**
+ * How long a bot may go without trading before it trades anyway.
+ *
+ * The market this package exists to create has a bootstrapping problem: the
+ * strategies only act when the price moves, and the price only moves when they
+ * act. Left alone the whole thing settles into three bots agreeing that nothing
+ * is happening - which is the flat chart we were trying to avoid, now with more
+ * moving parts. So each bot has a floor on its own silence.
+ *
+ * Randomised, and kept per bot, so the three do not arrive together and turn
+ * the market into synchronised bursts.
+ */
+const LIQUIDITY_MIN_MS = 3 * 60_000;
+const LIQUIDITY_MAX_MS = 6 * 60_000;
+
+const nextLiquidityWindow = (): number =>
+  Date.now() + LIQUIDITY_MIN_MS + Math.random() * (LIQUIDITY_MAX_MS - LIQUIDITY_MIN_MS);
+
+const round2 = (n: number): number => Math.floor(n * 100) / 100;
 
 const states = new Map<string, BotState>();
 
 const stateFor = (accountId: string): BotState => {
   let s = states.get(accountId);
   if (!s || Date.now() - s.dayStartedAt > 24 * 60 * 60 * 1000) {
-    s = { tradesToday: 0, dayStartedAt: Date.now() };
+    s = { tradesToday: 0, dayStartedAt: Date.now(), nextLiquidityAt: nextLiquidityWindow() };
     states.set(accountId, s);
   }
   return s;
 };
+
+/**
+ * The largest buy this balance allows, which is not the size the strategy asked
+ * for.
+ *
+ * The old code compared the two and refused when the ask was bigger. That reads
+ * as caution and is not: the limits exist to cap exposure, and a trade at the
+ * cap respects them exactly as well as one below it. Refusing instead meant the
+ * grid bot, whose configured size was 8 against a 7.50 cap, spent the entire
+ * run announcing a trade it was never going to make. A limit should shape the
+ * trade, not cancel it.
+ */
+function buyCeiling(balanceUsdc: number): number {
+  const cap = balanceUsdc * BOT_RISK.maxShareOfBalancePerTrade;
+  const spendable = Math.max(0, balanceUsdc - BOT_RISK.reserveUsdc);
+  return round2(Math.min(cap, spendable));
+}
 
 // ------------------------------------------------------------- the strategies
 
@@ -158,11 +208,20 @@ function reversion(history: PriceHistory, holdingPnlPct: number | undefined, siz
   return { action: "HOLD", reason: `${gapPct.toFixed(2)}% from its average, inside the ±0.5% band it acts on` };
 }
 
+/**
+ * The grid. It ignores the chart and trades on a clock - but it alternates.
+ *
+ * A grid that only ever buys is not a grid, it is a drain: it spends its quote
+ * balance down until every further rung is refused for want of funds, which is
+ * exactly what happened on its first run. Selling part of the position back on
+ * the other leg is what makes the pattern sustainable, and it has the useful
+ * side effect of putting both sides of a trade into the market.
+ */
 function grid(
-  history: PriceHistory,
   holdingPnlPct: number | undefined,
   size: number,
   state: BotState,
+  positionTokens: number,
 ): BotDecision {
   const TAKE_PROFIT_PCT = 3;
   const EVERY_MS = 10 * 60_000;
@@ -174,23 +233,85 @@ function grid(
       reason: `the clock does not matter here - the position is at +${holdingPnlPct.toFixed(2)}%, past its +${TAKE_PROFIT_PCT}% target`,
     };
   }
-  const since = state.lastBuyAt ? Date.now() - state.lastBuyAt : Infinity;
-  if (since >= EVERY_MS) {
+
+  const since = state.lastTradeAt ? Date.now() - state.lastTradeAt : Infinity;
+  if (since < EVERY_MS) {
     return {
-      action: "BUY",
-      sizeUsdc: size,
-      reason:
-        state.lastBuyAt === undefined
-          ? "first buy of the run - this one ignores the chart entirely and buys on a clock"
-          : `${Math.round(since / 60_000)} minutes since the last buy - buying the next rung`,
+      action: "HOLD",
+      reason: `${Math.round((EVERY_MS - since) / 60_000)} minute(s) until the next rung${
+        holdingPnlPct !== undefined ? `, position at ${holdingPnlPct.toFixed(2)}%` : ""
+      }`,
     };
   }
+
+  // Alternate: sell half a rung back if the last one was a buy and there is
+  // something to sell, otherwise buy the next rung.
+  if (state.lastSide === "BUY" && positionTokens > 0) {
+    return {
+      action: "SELL",
+      sellFraction: 0.5,
+      reason: `${Math.round(since / 60_000)} minutes on from the last rung - selling half of it back, which is the grid's other leg`,
+    };
+  }
+
   return {
-    action: "HOLD",
-    reason: `${Math.round((EVERY_MS - since) / 60_000)} minute(s) until the next rung${
-      holdingPnlPct !== undefined ? `, position at ${holdingPnlPct.toFixed(2)}%` : ""
-    }`,
+    action: "BUY",
+    sizeUsdc: size,
+    reason:
+      state.lastTradeAt === undefined
+        ? "first rung of the run - this one ignores the chart entirely and trades on a clock"
+        : `${Math.round(since / 60_000)} minutes on from the last rung - buying the next one`,
   };
+}
+
+/**
+ * The trade a bot makes when its strategy has had nothing to say for too long.
+ *
+ * Deliberately small, randomised in side and size, and inside exactly the same
+ * limits as every other trade: the clock decides *that* it trades, never *how
+ * much*. It is labelled as what it is everywhere it surfaces, because a timed
+ * trade is evidence about the market's liquidity and nothing at all about the
+ * strategy's judgement.
+ */
+function liquidityTrade(
+  bot: BotConfig,
+  state: BotState,
+  balanceUsdc: number,
+  positionTokens: number,
+): BotDecision | undefined {
+  if (Date.now() < (state.nextLiquidityAt ?? Infinity)) return undefined;
+
+  const quiet = Math.round((Date.now() - (state.lastTradeAt ?? state.dayStartedAt)) / 60_000);
+  const ceiling = Math.min(bot.sizeUsdc, buyCeiling(balanceUsdc));
+  const canBuy = ceiling >= BOT_RISK.minTradeUsdc;
+  const canSell = positionTokens > 0;
+  if (!canBuy && !canSell) return undefined;
+
+  const note =
+    `liquidity trade: the strategy saw nothing to act on for ${quiet} minute(s), so this is a timed ` +
+    `trade to keep the market moving - not a view on the price`;
+
+  if (canBuy && (!canSell || Math.random() < 0.5)) {
+    const size = Math.max(
+      BOT_RISK.minTradeUsdc,
+      round2(BOT_RISK.minTradeUsdc + Math.random() * (ceiling - BOT_RISK.minTradeUsdc)),
+    );
+    return { action: "BUY", sizeUsdc: size, liquidity: true, reason: note };
+  }
+  return { action: "SELL", sellFraction: 0.2 + Math.random() * 0.3, liquidity: true, reason: note };
+}
+
+/**
+ * Records that a trade happened, which does three jobs at once: it is the grid
+ * bot's clock, it is how the grid knows which way to go next, and it pushes the
+ * liquidity deadline out. A strategy trade satisfies the liquidity floor just
+ * as well as a timed one - the floor is about the market being quiet, not about
+ * where the trade came from.
+ */
+function noteTrade(state: BotState, side: "BUY" | "SELL"): void {
+  state.lastTradeAt = Date.now();
+  state.lastSide = side;
+  state.nextLiquidityAt = nextLiquidityWindow();
 }
 
 // ------------------------------------------------------------------ execution
@@ -204,6 +325,8 @@ export type BotPass = {
   vetoed?: string;
   txHash?: string;
   error?: string;
+  /** True when the clock, not the strategy, is why this pass traded. */
+  liquidity?: boolean;
 };
 
 export async function runBot(bot: BotConfig, history: PriceHistory, log: (s: string) => void): Promise<BotPass> {
@@ -222,27 +345,47 @@ export async function runBot(bot: BotConfig, history: PriceHistory, log: (s: str
   const pnlPct =
     held && basis > 0 && price !== undefined ? ((positionTokens * price - basis) / basis) * 100 : undefined;
 
-  const decision =
+  let decision =
     bot.kind === "momentum"
       ? momentum(history, pnlPct, bot.sizeUsdc)
       : bot.kind === "reversion"
         ? reversion(history, pnlPct, bot.sizeUsdc)
-        : grid(history, pnlPct, bot.sizeUsdc, state);
+        : grid(pnlPct, bot.sizeUsdc, state, positionTokens);
 
-  const pass: BotPass = { bot, decision, balanceUsdc, positionTokens, pnlPct };
+  // The strategy had nothing to say. If it has had nothing to say for long
+  // enough, trade anyway - and say that that is why.
+  if (decision.action === "HOLD") {
+    const timed = liquidityTrade(bot, state, balanceUsdc, positionTokens);
+    if (timed) {
+      log(`  ${bot.accountId.split(".")[0]}: strategy held - ${decision.reason}`);
+      decision = timed;
+    }
+  }
+
+  const pass: BotPass = { bot, decision, balanceUsdc, positionTokens, pnlPct, liquidity: decision.liquidity };
 
   // ---- the limits, after the strategy has spoken ----
   if (decision.action !== "HOLD") {
     if (state.tradesToday >= BOT_RISK.maxTradesPerDayEach) {
       pass.vetoed = `${state.tradesToday} trades today, at the ${BOT_RISK.maxTradesPerDayEach} cap`;
     } else if (decision.action === "BUY") {
-      const size = decision.sizeUsdc ?? 0;
-      const spendable = Math.max(0, balanceUsdc - BOT_RISK.reserveUsdc);
-      const cap = balanceUsdc * BOT_RISK.maxShareOfBalancePerTrade;
-      if (size < BOT_RISK.minTradeUsdc) pass.vetoed = `size ${size} is below the ${BOT_RISK.minTradeUsdc} minimum`;
-      else if (size > cap) pass.vetoed = `size ${size} is over the ${(BOT_RISK.maxShareOfBalancePerTrade * 100).toFixed(0)}% per-trade cap of ${cap.toFixed(2)}`;
-      else if (size > spendable)
-        pass.vetoed = `only ${spendable.toFixed(2)} spendable once the ${BOT_RISK.reserveUsdc} reserve is kept back`;
+      const asked = decision.sizeUsdc ?? 0;
+      const ceiling = buyCeiling(balanceUsdc);
+      const size = Math.min(asked, ceiling);
+      if (size < BOT_RISK.minTradeUsdc) {
+        // The only honest refusal left: there is not enough to trade with.
+        pass.vetoed =
+          `${balanceUsdc.toFixed(2)} tUSDC leaves at most ${ceiling.toFixed(2)} tradable once the ` +
+          `${(BOT_RISK.maxShareOfBalancePerTrade * 100).toFixed(0)}% cap and the ` +
+          `${BOT_RISK.reserveUsdc} reserve are applied, below the ${BOT_RISK.minTradeUsdc} minimum`;
+      } else if (size < asked) {
+        decision = { ...decision, sizeUsdc: size };
+        pass.decision = decision;
+        log(
+          `  ${bot.accountId.split(".")[0]}: trimming the buy from ${asked.toFixed(2)} to ` +
+          `${size.toFixed(2)} to stay inside its limits`,
+        );
+      }
     } else if (decision.action === "SELL" && !held) {
       pass.vetoed = `nothing held in ${MIRROR_SYMBOL} to sell`;
     }
@@ -286,9 +429,12 @@ export async function runBot(bot: BotConfig, history: PriceHistory, log: (s: str
         min_out: applySlippage(expected).toString(),
       });
       pass.txHash = hash;
-      state.lastBuyAt = Date.now();
       state.tradesToday++;
-      log(`  ${bot.accountId.split(".")[0]}: BUY ${decision.sizeUsdc!.toFixed(2)} - ${decision.reason}`);
+      noteTrade(state, "BUY");
+      log(
+        `  ${bot.accountId.split(".")[0]}: BUY ${decision.sizeUsdc!.toFixed(2)}` +
+        `${decision.liquidity ? " [liquidity]" : ""} - ${decision.reason}`,
+      );
       log(`     ${explorerTx(hash)}`);
     } else {
       const whole = BigInt(held!.amount);
@@ -307,9 +453,10 @@ export async function runBot(bot: BotConfig, history: PriceHistory, log: (s: str
       });
       pass.txHash = hash;
       state.tradesToday++;
+      noteTrade(state, "SELL");
       log(
         `  ${bot.accountId.split(".")[0]}: SELL ${toUnits(amount, MIRROR_DECIMALS).toFixed(6)} ` +
-        `${MIRROR_SYMBOL} - ${decision.reason}`,
+        `${MIRROR_SYMBOL}${decision.liquidity ? " [liquidity]" : ""} - ${decision.reason}`,
       );
       log(`     ${explorerTx(hash)}`);
     }

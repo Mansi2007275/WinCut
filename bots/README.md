@@ -274,6 +274,35 @@ dishonest state this whole package can get into.
 
 ---
 
+## The liquidity floor
+
+The first live run produced no trades at all, and every actor had a good reason:
+
+```
+grid   : refused a BUY - size 8 is over the 25% per-trade cap of 7.50
+momo   : HOLD - 0 of the last two ticks up, 0.00% over three
+revert : HOLD - 0.00% from its average, inside the +/-0.5% band it acts on
+maker  : drift -0.19%, inside the band - leaving the price to the traders
+```
+
+Each line is correct in isolation and the four of them together are a deadlock.
+The strategies only act when the price moves; the price only moves when they
+act. Nobody is wrong and nothing happens.
+
+Two things fix it. The grid bot's refusal was a plain bug - a limit should shape
+a trade, not cancel it, so a buy is now trimmed to the cap rather than refused
+above it, and the grid alternates buys with sells so it cannot spend itself down
+to a balance too small to trade with. And every bot now has a floor on its own
+silence: if its strategy has held for three to six minutes (randomised per bot,
+so they do not arrive together), it makes a small randomised trade anyway.
+
+That trade is inside exactly the same limits as any other - the clock decides
+*that* it trades, never *how much*. It is labelled `[liquidity]` in the log,
+carried as a flag through the decision, and disclosed on the site, because a
+timed trade is evidence about the market's liquidity and nothing whatever about
+the strategy's judgement. Letting it appear as a strategy decision would be the
+one dishonest thing in this package.
+
 ## Running it somewhere that stays up
 
 Same shape as the agent: a long-running worker, no inbound port.

@@ -41,7 +41,7 @@ export const isMirrorMarket = (tokenId: string | undefined): boolean =>
   Boolean(tokenId && MIRROR_TOKEN_ID && tokenId === MIRROR_TOKEN_ID);
 
 export const BOT_NOTE =
-  "This is one of WinCut's own trading bots, not a person. It runs a fixed strategy on a timer so that testnet has trades in it at all. Its results are real and read from the contract, but copying it is copying a script, and it is not tuned to be profitable.";
+  "This is one of WinCut's own trading bots, not a person. It runs a fixed strategy so that testnet has trades in it at all, and when that strategy has seen nothing to act on for a few minutes it makes a small randomised trade anyway, marked as a liquidity trade - otherwise the bots would agree that nothing was happening and the market would stop. Its results are real and read from the contract, but copying it is copying a script, and it is not tuned to be profitable.";
 
 export const MM_NOTE =
   "This account is WinCut's market maker, not a trader. It does not trade through WinCut; it swaps on the exchange to keep the pool's price tracking real mainnet NEAR, which is what stops the bots walking the price somewhere meaningless.";
