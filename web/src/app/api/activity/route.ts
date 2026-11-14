@@ -29,6 +29,7 @@ import * as contract from "@/lib/contract";
 export const dynamic = "force-dynamic";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+const HOUR_MS = 60 * 60 * 1000;
 /** The contract's trade ring capacity. */
 const RING = 500;
 
@@ -92,6 +93,20 @@ export async function GET(request: Request) {
     }
   });
 
+  // A separate, shorter window for the "is this market alive right now" badge.
+  // 24h is the right window for volume and the wrong one for liveness: a
+  // market that traded hard this morning and has been silent since would read
+  // as busy all day.
+  const hourAgo = Date.now() - HOUR_MS;
+  const hourAgoNs = BigInt(hourAgo) * 1_000_000n;
+  let countLastHour = mine.filter((t) => {
+    try {
+      return BigInt(t.timestamp) >= hourAgoNs;
+    } catch {
+      return false;
+    }
+  }).length;
+
   const usdcOf = (t: contract.Trade) => Number(t.usdc) / 1e6;
   let buys = mine.filter((t) => t.side === "Buy").reduce((s, t) => s + usdcOf(t), 0);
   let sells = mine.filter((t) => t.side === "Sell").reduce((s, t) => s + usdcOf(t), 0);
@@ -112,6 +127,7 @@ export async function GET(request: Request) {
         else sells += s.usdc;
       }
       count += swaps.length;
+      countLastHour += swaps.filter((sw) => sw.t >= hourAgo).length;
     }
   }
 
@@ -126,6 +142,7 @@ export async function GET(request: Request) {
     sells,
     buyPct: volume > 0 ? (buys / volume) * 100 : null,
     count,
+    countLastHour,
     wincutCount: mine.length,
     makerCount,
     makerVolume,

@@ -50,7 +50,7 @@ function TradeScreen({ tokenId }: { tokenId: string }) {
   const market = useMarket(tokenId);
   const token = market.token;
 
-  const [timeframe, setTimeframe] = useState<TimeframeKey>("15m");
+  const [timeframe, setTimeframe] = useState<TimeframeKey>("5m");
   const [followed, setFollowed] = useState<string | null>(null);
   const [presetUsd, setPresetUsd] = useState<number | undefined>();
 

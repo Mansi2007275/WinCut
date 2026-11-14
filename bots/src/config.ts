@@ -250,7 +250,9 @@ export type BotConfig = {
   /** Quote units per trade. */
   sizeUsdc: number;
   /** Seconds between this bot's passes. */
-  everyMs: number;
+  /** Wakes somewhere in this range, redrawn after every pass. */
+  everyMinMs: number;
+  everyMaxMs: number;
 };
 
 const botKey = (slot: number) => optional(`BOT${slot}_PRIVATE_KEY`);
@@ -264,6 +266,34 @@ const botKey = (slot: number) => optional(`BOT${slot}_PRIVATE_KEY`);
  * what a market is. None of them is trying to be profitable; they are trying to
  * be a counterparty.
  */
+/**
+ * How often a bot wakes, and how big its trades are.
+ *
+ * Both are ranges rather than constants, and the reason is the chart. Three
+ * bots on fixed 90/120/150 second clocks, each trading a fixed size, produce a
+ * price series with a visible beat: the same sizes arriving at the same
+ * intervals, which looks generated even though every trade is real. Drawing
+ * the interval and the size per pass removes the pattern without touching a
+ * single limit - the risk caps still bound the result, they just no longer
+ * bound it to the same number every time.
+ *
+ * The floor of 90 seconds is roughly three sampling ticks, so a bot never
+ * trades twice inside one observation of the price it is reacting to.
+ */
+export const BOT_CADENCE = {
+  minMs: Number(optional("BOT_EVERY_MIN_MS") ?? 90_000),
+  maxMs: Number(optional("BOT_EVERY_MAX_MS") ?? 180_000),
+} as const;
+
+/** Trade size is drawn per pass from this range, then capped as usual. */
+export const BOT_SIZE = {
+  minUsdc: Number(optional("BOT_SIZE_MIN") ?? 3),
+  maxUsdc: Number(optional("BOT_SIZE_MAX") ?? 12),
+} as const;
+
+/** A market nobody has traded for this long goes to the front of the queue. */
+export const MARKET_STALE_MS = Number(optional("MARKET_STALE_MS") ?? 5 * 60_000);
+
 export const BOTS: BotConfig[] = [
   {
     accountId: optional("BOT1_ACCOUNT_ID") ?? "momo.wincut-mansi.testnet",
@@ -271,23 +301,26 @@ export const BOTS: BotConfig[] = [
     kind: "momentum",
     blurb: "Buys into a move once it has run two candles, and gets out when it stalls.",
     sizeUsdc: Number(optional("BOT1_SIZE") ?? 12),
-    everyMs: Number(optional("BOT1_EVERY_MS") ?? 90_000),
+    everyMinMs: Number(optional("BOT1_EVERY_MIN_MS") ?? BOT_CADENCE.minMs),
+    everyMaxMs: Number(optional("BOT1_EVERY_MAX_MS") ?? BOT_CADENCE.maxMs),
   },
   {
     accountId: optional("BOT2_ACCOUNT_ID") ?? "revert.wincut-mansi.testnet",
     privateKey: botKey(2),
     kind: "reversion",
     blurb: "Fades anything that moves too far from its own short average.",
-    sizeUsdc: Number(optional("BOT2_SIZE") ?? 15),
-    everyMs: Number(optional("BOT2_EVERY_MS") ?? 120_000),
+    sizeUsdc: Number(optional("BOT2_SIZE") ?? 12),
+    everyMinMs: Number(optional("BOT2_EVERY_MIN_MS") ?? BOT_CADENCE.minMs),
+    everyMaxMs: Number(optional("BOT2_EVERY_MAX_MS") ?? BOT_CADENCE.maxMs),
   },
   {
     accountId: optional("BOT3_ACCOUNT_ID") ?? "grid.wincut-mansi.testnet",
     privateKey: botKey(3),
     kind: "grid",
     blurb: "Ignores the chart. Buys a fixed size on a clock and takes profit at +3%.",
-    sizeUsdc: Number(optional("BOT3_SIZE") ?? 8),
-    everyMs: Number(optional("BOT3_EVERY_MS") ?? 150_000),
+    sizeUsdc: Number(optional("BOT3_SIZE") ?? 12),
+    everyMinMs: Number(optional("BOT3_EVERY_MIN_MS") ?? BOT_CADENCE.minMs),
+    everyMaxMs: Number(optional("BOT3_EVERY_MAX_MS") ?? BOT_CADENCE.maxMs),
   },
 ];
 

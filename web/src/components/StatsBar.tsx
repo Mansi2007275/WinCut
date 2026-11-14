@@ -22,6 +22,36 @@ import { CHARTS_AVAILABLE, isDeployed } from "@/lib/near";
 import { midPriceIsSane } from "@/lib/rhea";
 import { Skeleton } from "./ui";
 
+/**
+ * Whether this market is trading right now, in one glance.
+ *
+ * Counted over the last hour rather than the last day, because the question
+ * the badge answers is "is anything happening", and a 24h count says yes all
+ * afternoon about a market that went quiet at breakfast. Zero is shown as
+ * zero: a badge that only ever appears when the news is good is decoration.
+ */
+function LiveBadge({ activity }: { activity?: Activity }) {
+  if (!activity) return null;
+  const n = activity.countLastHour;
+  const live = n > 0;
+  return (
+    <span
+      title={`${n} settled trade(s) and market-maker swap(s) in the last hour, from ${activity.source}`}
+      className={`inline-flex items-center gap-1.5 rounded-pill border px-2 py-0.5 text-[10px] font-medium ${
+        live ? "border-profit/30 bg-profit/10 text-profit" : "border-border bg-surface text-secondary"
+      }`}
+    >
+      <span
+        aria-hidden
+        className={`h-1.5 w-1.5 rounded-pill ${live ? "animate-pulse bg-profit" : "bg-secondary"}`}
+      />
+      <span className="num">
+        {live ? `Live · ${n} ${n === 1 ? "trade" : "trades"} in last hour` : "no trades in last hour"}
+      </span>
+    </span>
+  );
+}
+
 export function StatsBar({
   token,
   route,
@@ -57,6 +87,7 @@ export function StatsBar({
           <div className="flex items-center gap-2">
             <h1 className="text-lg leading-none font-semibold">{token.symbol}</h1>
             <span className="text-xs text-secondary">/ USDC</span>
+            <LiveBadge activity={activity} />
             <a
               href={explorerToken(token.token_id)}
               target="_blank"
