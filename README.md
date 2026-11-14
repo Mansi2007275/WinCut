@@ -29,7 +29,26 @@ says so in those words.
 
 ## Screenshots
 
-_Pending: `docs/img/trade.png`, `docs/img/dashboard.png`, `docs/img/agent.png`._
+Captured from the live deployment, not mocked up. Every number in them was read from testnet
+at the moment the shot was taken.
+
+**The trade page** — 5-minute candles built from the pool's own swaps, live Rhea depth, and an
+order panel that says `WinCut fee: 0%` on the buy because there is no buy fee.
+
+![The MNEAR trade page](docs/img/trade.png)
+
+**The Cut Field** — every settled trade as a mark on its market's lane, wins above the line and
+losses below. 357 trades, 99 losing exits, and the one fee the contract has ever charged.
+
+![The Cut Field dashboard](docs/img/dashboard.png)
+
+**How the fee works** — drag the exit price and watch the fee stay at zero all the way down.
+
+![The fee calculator](docs/img/how-it-works.png)
+
+Also: [markets](docs/img/markets.png) · [traders](docs/img/board.png) ·
+[home](docs/img/home.png) · 390px [dashboard](docs/img/mobile-dashboard.png) and
+[how it works](docs/img/mobile-how-it-works.png).
 
 ---
 
@@ -204,14 +223,19 @@ with the user whole and has a test; `release_stale_lock()` is public after five 
 
 | | link |
 |---|---|
-| Contract (223 trades, every receipt) | [`wincut-mansi.testnet`](https://testnet.nearblocks.io/address/wincut-mansi.testnet) |
-| AI agent (restricted key, 23 trades) | [`agent.wincut-mansi.testnet`](https://testnet.nearblocks.io/address/agent.wincut-mansi.testnet) |
+| Contract (343 trades, every receipt) | [`wincut-mansi.testnet`](https://testnet.nearblocks.io/address/wincut-mansi.testnet) |
+| AI agent (restricted key, 45 trades) | [`agent.wincut-mansi.testnet`](https://testnet.nearblocks.io/address/agent.wincut-mansi.testnet) |
 | Market maker (the peg swaps) | [`mm.wincut-mansi.testnet`](https://testnet.nearblocks.io/address/mm.wincut-mansi.testnet) |
 | Bots | [`momo`](https://testnet.nearblocks.io/address/momo.wincut-mansi.testnet) · [`revert`](https://testnet.nearblocks.io/address/revert.wincut-mansi.testnet) · [`grid`](https://testnet.nearblocks.io/address/grid.wincut-mansi.testnet) |
 | The AMM the swaps cross | [`ref-finance-101.testnet`](https://testnet.nearblocks.io/address/ref-finance-101.testnet) |
 
-A losing sell to read for yourself: trade id 142, `agent` selling MSHITZU at **−16.64 tUSDC**,
-`fee: "0"`, credit banked. `get_recent_trades` returns it.
+Two trades to read for yourself, both returned by `get_recent_trades`:
+
+- **id 142** — `agent` sold MSHITZU at **−16.64 tUSDC**. `fee: "0"`, and 16.64 went to that
+  account's loss credit. This is the common case: 97 of the 116 sells look like this.
+- **id 274** — `trader` sold MNEAR at **+0.766117 tUSDC** with no credit left.
+  `fee: "76611"`, a tenth of the profit, exact. This is the only fee the contract has
+  ever charged.
 
 ---
 
