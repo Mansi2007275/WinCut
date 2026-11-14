@@ -46,17 +46,30 @@ export default function OpengraphImage() {
           <span style={{ fontSize: 30, fontWeight: 700, letterSpacing: -0.5 }}>WinCut</span>
         </div>
 
-        <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-          <span style={{ fontSize: 62, fontWeight: 700, lineHeight: 1.08, letterSpacing: -2 }}>
+        {/* Satori lays out flex boxes, not flowing text: a <br /> inside a
+            span is ignored and the line runs off the card. Each line is its
+            own row. */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+          <div style={{ display: "flex", fontSize: 58, fontWeight: 700, letterSpacing: -2 }}>
             Every trading app gets paid
-            <br />
-            when you lose.
-            <span style={{ color: "#16c784" }}> WinCut doesn&apos;t.</span>
-          </span>
-          <span style={{ fontSize: 27, color: "#8a929c", lineHeight: 1.35 }}>
+          </div>
+          <div style={{ display: "flex", gap: 14, fontSize: 58, fontWeight: 700, letterSpacing: -2 }}>
+            <span>when you lose.</span>
+            <span style={{ color: "#16c784" }}>WinCut doesn&apos;t.</span>
+          </div>
+          <div
+            style={{
+              display: "flex",
+              fontSize: 26,
+              color: "#8a929c",
+              lineHeight: 1.35,
+              maxWidth: 1000,
+              marginTop: 10,
+            }}
+          >
             The platform, the trader you copied and your referrer are paid only out of your
             profit. A losing exit costs nothing and banks a credit against your next win.
-          </span>
+          </div>
         </div>
 
         <div style={{ display: "flex", alignItems: "center", gap: 28, fontSize: 22 }}>
