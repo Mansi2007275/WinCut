@@ -272,7 +272,7 @@ cd agent && npm start                    # DRY_RUN=1 to decide without signing
 `bots/README.md` and `agent/README.md` cover the keys, env and the one-step-at-a-time
 `near-cli-rs` commands for creating a mirror market.
 
-## Known limitations
+## Future Plan TO Work On...
 
 - **One settlement at a time, protocol-wide.** The lock refuses a concurrent trade for ~5 blocks
   with a clear message. Rhea's non-instant `swap` returns the exact output and would remove the
@@ -288,7 +288,7 @@ cd agent && npm start                    # DRY_RUN=1 to decide without signing
   unbounded. `get_leaderboard` sorts the whole trader map in a view — fine here, wrong at 10k.
 - **Mainnet buys and sells have never been signed.** The contract is deployed and exercised on
   testnet only. Every mainnet id is verified; nothing mainnet has been traded.
-- **Not audited.** Hackathon code, 60 contract tests plus 89 in the off-chain packages.
+
 
 ---
 
