@@ -35,7 +35,36 @@ const buy = (sizeUsdc: number, over: Partial<typeof base> = {}) =>
   vet({ action: "BUY", tokenId: "a.testnet", sizeUsdc, reason: "t" }, { ...base, ...over });
 
 check("20% of balance is allowed", buy(20).ok);
-check("20.01% is refused", !buy(20.01).ok);
+check("20% of balance passes unchanged", (() => {
+  const v = buy(20);
+  return v.ok && v.proposal.sizeUsdc === 20 && v.proposal.reason === "t";
+})());
+check("20.01% is trimmed to the cap, not refused", (() => {
+  const v = buy(20.01);
+  return v.ok && v.proposal.sizeUsdc === 20;
+})());
+// The regression that started this: a 114.53 balance gives a 22.906 cap, the
+// model proposed 22.91, and the agent refused a trade for being four tenths of
+// a cent over while printing both numbers rounded to 22.91.
+check("a proposal a rounding error over the cap still trades", (() => {
+  const v = vet(
+    { action: "BUY", tokenId: "a.testnet", sizeUsdc: 22.91, reason: "t" },
+    { ...base, balanceUsdc: 114.53 },
+  );
+  return v.ok && v.proposal.sizeUsdc === 22.9;
+})());
+check("a proposal exactly at an exact cap is untouched", (() => {
+  // 100 * 0.2 is exactly 20, so nothing should be trimmed or renamed.
+  const v = buy(20);
+  return v.ok && !/trimmed/.test(v.proposal.reason);
+})());
+check("the trimmed size never exceeds the ceiling", (() => {
+  const v = vet(
+    { action: "BUY", tokenId: "a.testnet", sizeUsdc: 1000, reason: "t" },
+    { ...base, balanceUsdc: 114.53 },
+  );
+  return v.ok && (v.proposal.sizeUsdc ?? 0) <= 114.53 * 0.2;
+})());
 check("size below the minimum is refused", !buy(RISK.minTradeUsdc - 0.01).ok);
 check("an unlisted token is refused", !vet({ action: "BUY", tokenId: "nope.testnet", sizeUsdc: 5, reason: "t" }, base).ok);
 check("no token at all is refused", !vet({ action: "BUY", sizeUsdc: 5, reason: "t" }, base).ok);
@@ -64,6 +93,17 @@ check("a buy over the pool cap is trimmed, not refused", (() => {
   const v = buyIn(20, 400);
   return v.ok && v.proposal.sizeUsdc === 6;
 })());
+check("the lowest of the three ceilings wins", (() => {
+  // balance cap 20, pool cap 6: the pool is lower, so 6.
+  const v = buyIn(20, 400);
+  if (!(v.ok && v.proposal.sizeUsdc === 6)) return false;
+  // balance cap 2, pool cap 6: the balance is lower, so 2.
+  const w = vet(
+    { action: "BUY", tokenId: "a.testnet", sizeUsdc: 20, reason: "t" },
+    { ...base, balanceUsdc: 10, depthUsdc: depth(400) },
+  );
+  return w.ok && w.proposal.sizeUsdc === 2;
+})());
 check("the trim is written into the reason", (() => {
   const v = buyIn(20, 400);
   return v.ok && /trimmed from 20\.00 to 6\.00/.test(v.proposal.reason);
@@ -81,10 +121,17 @@ check("no depth given means no pool cap", (() => {
   const v = vet({ action: "BUY", tokenId: "a.testnet", sizeUsdc: 20, reason: "t" }, base);
   return v.ok && v.proposal.sizeUsdc === 20;
 })());
-check("the pool cap never overrides the balance cap", !vet(
-  { action: "BUY", tokenId: "a.testnet", sizeUsdc: 50, reason: "t" },
-  { ...base, depthUsdc: depth(100_000) },
-).ok);
+check("with a deep pool the balance cap is what binds", (() => {
+  const v = vet(
+    { action: "BUY", tokenId: "a.testnet", sizeUsdc: 50, reason: "t" },
+    { ...base, depthUsdc: depth(100_000) },
+  );
+  return v.ok && v.proposal.sizeUsdc === 20 && /per-trade cap/.test(v.proposal.reason);
+})());
+check("the reason names the pool when the pool is what binds", (() => {
+  const v = buyIn(20, 400);
+  return v.ok && /pool cap/.test(v.proposal.reason);
+})());
 
 console.log("sell limits");
 const held = { ...base, states: [one("A", 100)] };

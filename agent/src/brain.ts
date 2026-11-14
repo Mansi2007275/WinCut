@@ -58,13 +58,14 @@ function buildPrompt(
     '{"action":"BUY"|"SELL"|"HOLD","token_id":string|null,"size_usdc":number|null,"sell_fraction":number|null,"reason":string}',
     "reason is one or two sentences a human will read on a public page. Name the numbers you acted on.",
     "",
-    "The limits below are enforced in code after you answer. Applying them is not your job; a proposal that breaks one is rejected and logged as a refusal, which reads worse than a plain HOLD:",
+    "The limits below are enforced in code after you answer. Applying them is not your job. A proposal that breaks a limit on size is trimmed to fit; one that breaks any other limit is refused and logged as a refusal, which reads worse than a plain HOLD:",
     `- a buy may spend at most ${RISK.maxShareOfBalancePerTrade * 100}% of the balance`,
     `- at most ${RISK.maxOpenPositions} positions open at once`,
     `- at most ${RISK.maxTradesPerDay} trades per 24 hours`,
     `- a position past ${RISK.stopLossPct}% or +${RISK.takeProfitPct}% is closed automatically before you are asked`,
     `- no buy smaller than ${RISK.minTradeUsdc} tUSDC`,
-    `- a buy may also take at most ${RISK.maxShareOfPoolDepth * 100}% of the market's pool depth, shown per market below. This one trims rather than refusing, so an oversized proposal still trades - just smaller than you asked, and the log will say so. Sizing to it yourself is better: on a thin pool your own trade is most of the price move you would be reacting to.`,
+    `- a buy may also take at most ${RISK.maxShareOfPoolDepth * 100}% of the market's pool depth, which is shown per market below`,
+    "An oversized buy is trimmed to whichever of those is lowest rather than refused, so it still trades - just smaller than you asked, and the log will say the size was ours. Sizing to them yourself is still better: on a thin pool your own trade is most of the price move you would otherwise be reacting to.",
   ].join("\n");
 
   const user = [

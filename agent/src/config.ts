@@ -60,8 +60,26 @@ export const LOOP_MS = Number(optional("AGENT_LOOP_MS") ?? 5 * 60_000);
 // ------------------------------------------------------------------- the LLM
 
 /** NEAR AI Cloud, or anything else that speaks the OpenAI chat completions API. */
-export const LLM_BASE_URL = optional("NEAR_AI_BASE_URL") ?? "https://api.near.ai/v1";
-export const LLM_MODEL = optional("NEAR_AI_MODEL") ?? "deepseek-v3";
+/**
+ * NEAR AI Cloud, which is not where this used to point.
+ *
+ * `api.near.ai/v1` now answers every request with HTTP 410: the NEAR AI
+ * Developer Hub and its completions API were retired on 31 October 2025. The
+ * live endpoint is `cloud-api.near.ai/v1`. Nothing broke visibly, because the
+ * agent falls back to its own arithmetic whenever the model is unreachable -
+ * which is the fallback doing its job, and also exactly how a dead endpoint
+ * stays unnoticed for weeks.
+ *
+ * The old default model, `deepseek-v3`, is not a model id this API serves
+ * either; `/v1/models` lists 64 and none of them is called that. claude-haiku-5-5
+ * is the default now: $0.10 per million in and $0.50 out, which at twelve
+ * passes an hour is about ten cents a day, and it is reliable at returning the
+ * one JSON object the prompt asks for. `curl https://cloud-api.near.ai/v1/models`
+ * lists the alternatives; z-ai/glm-5.3-flash is cheaper and
+ * anthropic/claude-sonnet-5-5 is stronger.
+ */
+export const LLM_BASE_URL = optional("NEAR_AI_BASE_URL") ?? "https://cloud-api.near.ai/v1";
+export const LLM_MODEL = optional("NEAR_AI_MODEL") ?? "anthropic/claude-haiku-5-5";
 export const LLM_API_KEY = optional("NEAR_AI_API_KEY");
 
 // ------------------------------------------------------------------- storage

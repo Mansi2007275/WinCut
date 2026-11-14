@@ -140,56 +140,67 @@ export function vet(
 
   const size = proposal.sizeUsdc ?? 0;
   if (!(size >= RISK.minTradeUsdc)) {
+    // Trimming cannot fix a proposal that is too small: raising it would be
+    // inventing a size the model never asked for.
     return { ok: false, reason: `Proposed size ${size} is below the ${RISK.minTradeUsdc} minimum.` };
   }
 
-  const cap = ctx.balanceUsdc * RISK.maxShareOfBalancePerTrade;
-  if (size > cap + 1e-9) {
+  // Every ceiling on a buy, in one place, lowest wins.
+  //
+  // These used to be three separate checks, two of which refused and one of
+  // which trimmed, and the refusals were the wrong call. The model proposed
+  // 22.91 against a cap of 22.906 - four tenths of a cent over - and the agent
+  // refused the trade and logged `Proposed 22.91 but the per-trade cap is
+  // 22.91`, which reads as a bug because both numbers were rounded to two
+  // decimals for display. It was not a comparison bug: the proposal really was
+  // above the cap. It was a policy bug. A cap exists to bound the trade, and a
+  // trade at the cap is bounded; refusing one that overshoots by a rounding
+  // error throws away a decision that was otherwise fine, and hands the public
+  // log a refusal nobody can read as anything but broken.
+  //
+  // So all three trim now, and the reason records it, so the log says the size
+  // was ours rather than the model's.
+  const ceilings: { usdc: number; why: string }[] = [
+    {
+      usdc: ctx.balanceUsdc * RISK.maxShareOfBalancePerTrade,
+      why: `the ${RISK.maxShareOfBalancePerTrade * 100}% per-trade cap on a ${ctx.balanceUsdc.toFixed(2)} tUSDC balance`,
+    },
+    { usdc: ctx.balanceUsdc, why: `the ${ctx.balanceUsdc.toFixed(2)} tUSDC balance` },
+  ];
+
+  const depth = ctx.depthUsdc?.get(proposal.tokenId);
+  if (depth !== undefined && depth > 0) {
+    ceilings.push({
+      usdc: depth * RISK.maxShareOfPoolDepth,
+      why: `the ${RISK.maxShareOfPoolDepth * 100}% pool cap on ${depth.toFixed(0)} tUSDC of depth`,
+    });
+  }
+
+  const binding = ceilings.reduce((lo, c) => (c.usdc < lo.usdc ? c : lo));
+
+  if (binding.usdc < RISK.minTradeUsdc) {
     return {
       ok: false,
       reason:
-        `Proposed ${size.toFixed(2)} but the per-trade cap is ${cap.toFixed(2)} ` +
-        `(${RISK.maxShareOfBalancePerTrade * 100}% of a ${ctx.balanceUsdc.toFixed(2)} balance).`,
+        `Nothing tradable here: ${binding.why} allows ${binding.usdc.toFixed(2)} tUSDC, below the ` +
+        `${RISK.minTradeUsdc} minimum.`,
     };
   }
 
-  if (size > ctx.balanceUsdc) {
-    return { ok: false, reason: `Proposed ${size.toFixed(2)} against a balance of ${ctx.balanceUsdc.toFixed(2)}.` };
-  }
-
-  // The pool cap is the one limit here that trims instead of refusing, and the
-  // asymmetry is deliberate. Every other limit describes a state that changes:
-  // the balance cap is satisfied by proposing less next pass, the position
-  // limit by an exit, the daily cap by waiting. A pool's depth is not going to
-  // change because we refused, so refusing on it would mean an agent that
-  // never trades a thin market while filling its log with explanations. It is
-  // trimmed, and the trim is written into the reason so the public log says the
-  // size was ours and not the model's.
-  const depth = ctx.depthUsdc?.get(proposal.tokenId);
-  if (depth !== undefined && depth > 0) {
-    const depthCap = depth * RISK.maxShareOfPoolDepth;
-    if (depthCap < RISK.minTradeUsdc) {
-      return {
-        ok: false,
+  // Floored to the cent the contract can actually spend, so the trimmed size is
+  // never a hair above the ceiling it was trimmed to.
+  const allowed = Math.floor(binding.usdc * 100) / 100;
+  if (size > allowed) {
+    return {
+      ok: true,
+      proposal: {
+        ...proposal,
+        sizeUsdc: allowed,
         reason:
-          `${proposal.tokenId} has only ${depth.toFixed(0)} tUSDC of depth, so the ` +
-          `${RISK.maxShareOfPoolDepth * 100}% pool cap is ${depthCap.toFixed(2)} - below the ` +
-          `${RISK.minTradeUsdc} minimum. The market is too thin to trade without moving it.`,
-      };
-    }
-    if (size > depthCap + 1e-9) {
-      return {
-        ok: true,
-        proposal: {
-          ...proposal,
-          sizeUsdc: Math.floor(depthCap * 100) / 100,
-          reason:
-            `${proposal.reason} (trimmed from ${size.toFixed(2)} to ${depthCap.toFixed(2)} tUSDC: ` +
-            `the pool holds ${depth.toFixed(0)} tUSDC and one trade may take ` +
-            `${RISK.maxShareOfPoolDepth * 100}% of it)`,
-        },
-      };
-    }
+          `${proposal.reason} (trimmed from ${size.toFixed(2)} to ${allowed.toFixed(2)} tUSDC by ` +
+          `${binding.why})`,
+      },
+    };
   }
 
   return { ok: true, proposal };
