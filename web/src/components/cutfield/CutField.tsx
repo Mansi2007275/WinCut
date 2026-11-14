@@ -22,23 +22,15 @@ import { layout, type Hover } from "./Field3D.types";
 
 const Field3D = lazy(() => import("./Field3D"));
 
-/** Why the flat version is on screen, in the viewer's own terms. */
-type Mode = { because: string };
-
-/** The sentinel `because` for "nothing is stopping the 3D field here". */
-const OFFERABLE = "flat by default";
-
 /**
- * The flat field is the default, and the 3D one is a button.
+ * Why the flat version is on screen, in the viewer's own terms.
  *
- * Not a stylistic preference. The SVG field carries every number this page is
- * making a claim about, at every width, with no GPU and no second bundle; the
- * canvas adds one thing on top of that - watching the fee leave the pillar -
- * and on this machine it has been able to wedge the renderer badly enough that
- * the tab stops answering. A centrepiece that can take the whole page down is
- * worse than no centrepiece, so it only mounts when someone asks for it, and
- * the page is complete without it.
+ * `null` means nothing is stopping the canvas, so the canvas is what loads.
+ * Anything else is a reason the viewer would recognise as their own - their
+ * motion setting, their screen, their browser - and it is printed under the
+ * legend rather than left as a silent downgrade.
  */
+type Mode = { because: string | null };
 
 function hasWebgl(): boolean {
   try {
@@ -60,10 +52,16 @@ export function CutField({
 }) {
   // Server-rendered as the SVG: it needs no measurement and no canvas, so the
   // first paint is the real thing rather than a placeholder that swaps.
-  const [mode, setMode] = useState<Mode>({ because: "still checking this device" });
+  // Empty string, not null and not a sentence: before the effect runs we must
+  // neither mount the canvas nor print a reason the viewer would have to read
+  // and then watch disappear a frame later.
+  const [mode, setMode] = useState<Mode>({ because: "" });
   const [hover, setHover] = useState<Hover>(null);
   const [paused, setPaused] = useState(false);
-  const [wants3d, setWants3d] = useState(false);
+  // The canvas is the default. This is the viewer asking for the flat one,
+  // which is a different thing from the device not being able to run the
+  // canvas, and the legend says so differently in each case.
+  const [wantsFlat, setWantsFlat] = useState(false);
 
   useEffect(() => {
     const motion = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -73,7 +71,7 @@ export function CutField({
       if (motion.matches) return setMode({ because: "you asked for reduced motion" });
       if (small.matches) return setMode({ because: "narrow screen" });
       if (!hasWebgl()) return setMode({ because: "this browser has no WebGL" });
-      setMode({ because: OFFERABLE });
+      setMode({ because: null });
     };
     decide();
     motion.addEventListener("change", decide);
@@ -85,8 +83,8 @@ export function CutField({
   }, []);
 
   // A device that cannot run it is never offered it.
-  const offer3d = mode.because === OFFERABLE;
-  const showing3d = wants3d && offer3d;
+  const offer3d = mode.because === null;
+  const showing3d = offer3d && !wantsFlat;
 
   const data = useMemo(() => layout(ring, markets), [ring, markets]);
 
@@ -110,9 +108,9 @@ export function CutField({
           )}
           {offer3d && (
             <button
-              onClick={() => setWants3d((v) => !v)}
+              onClick={() => setWantsFlat((v) => !v)}
               className="rounded-btn border border-border px-2 py-0.5 text-secondary hover:text-text"
-              aria-pressed={showing3d}
+              aria-pressed={!showing3d}
             >
               {showing3d ? "flat view" : "3D view"}
             </button>
@@ -131,10 +129,7 @@ export function CutField({
               lanes={markets.length}
               onHover={setHover}
               paused={paused}
-              onError={() => {
-                setWants3d(false);
-                setMode({ because: "WebGL could not start here" });
-              }}
+              onError={() => setMode({ because: "WebGL could not start here" })}
             />
           </Suspense>
         ) : (
@@ -157,10 +152,8 @@ export function CutField({
         )}
       </div>
 
-      <Legend
-        charged={charged}
-        flat={showing3d || mode.because === OFFERABLE ? undefined : mode.because}
-      />
+      {/* Choosing the flat view needs no explanation; being given it does. */}
+      <Legend charged={charged} flat={mode.because ?? undefined} />
     </section>
   );
 }
