@@ -69,6 +69,27 @@ export const LLM_API_KEY = optional("NEAR_AI_API_KEY");
 export const UPSTASH_URL = optional("UPSTASH_REDIS_REST_URL");
 export const UPSTASH_TOKEN = optional("UPSTASH_REDIS_REST_TOKEN");
 
+/**
+ * The market the agent treats as its main one, put first so it is what the
+ * model reads about before anything else.
+ *
+ * On testnet this is the pool WinCut actually operates and keeps traded, so it
+ * is the only market with enough history to read a trend from. The others stay
+ * listed and are still considered - they are simply not where anything is
+ * happening, and ordering them behind it stops six trendless markets crowding
+ * out the one that has a trend.
+ */
+export const PRIMARY_MARKET_TOKEN_ID =
+  optional("PRIMARY_MARKET_TOKEN_ID") ??
+  (NETWORK === "testnet" ? "mnear.tkn.primitives.testnet" : "");
+
+/**
+ * Candle width the agent reasons over. Short by default: the series is only as
+ * old as the market WinCut runs, and a 15-minute candle needs four times as
+ * long to say anything as a 5-minute one.
+ */
+export const TIMEFRAME = optional("AGENT_TIMEFRAME") ?? "5m";
+
 /** Where the web app reads candles from, for the agent's own market view. */
 export const WEB_BASE_URL = optional("WINCUT_WEB_URL") ?? "https://wincut.vercel.app";
 
@@ -92,6 +113,23 @@ export const RISK = {
   maxTradesPerDay: 12,
   /** Never put up a position smaller than this; dust is not a trade. */
   minTradeUsdc: 1,
+} as const;
+
+/**
+ * Thresholds the deterministic fallback acts on, as percentages.
+ *
+ * These are small on purpose, and the reason is the market rather than a
+ * preference. WinCut's testnet market is pegged: the market maker holds it
+ * within ±0.6% of real mainnet NEAR, so a move of 1.5% - a sensible entry on a
+ * volatile pool - is one the price is structurally prevented from making. A
+ * threshold the market cannot reach is not caution, it is an agent that never
+ * trades while appearing to have a strategy.
+ *
+ * Raise them for a market with no peg holding it in.
+ */
+export const FALLBACK = {
+  enterPct: Number(optional("FALLBACK_ENTER_PCT") ?? 0.35),
+  exitPct: Number(optional("FALLBACK_EXIT_PCT") ?? -0.35),
 } as const;
 
 export const USDC_DECIMALS = 6;

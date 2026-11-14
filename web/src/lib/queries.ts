@@ -28,6 +28,7 @@ import {
   TOKEN_IDS,
   USDC_DECIMALS,
   USDC_ID,
+  CHARTS_AVAILABLE,
   blockHeight,
   ftBalanceOf,
   ftDecimals,
@@ -400,7 +401,13 @@ export function usePoolStats(poolId: string | undefined, tokenId: string | undef
   return useQuery({
     queryKey: ["pool-stats", poolId, tokenId],
     queryFn: ({ signal }) => gecko.poolStats(poolId!, tokenId!, signal),
-    enabled: !!poolId && !!tokenId,
+    // Gated on CHARTS_AVAILABLE, not just on there being a pool id. A testnet
+    // token may legitimately carry a chart_pool as a record of which pool its
+    // series belongs to, and GeckoTerminal indexes mainnet only - so without
+    // this the app would poll an indexer that cannot know about the pool, for
+    // every viewer, forever. Gating here rather than blanking the config makes
+    // the app structurally unable to show mainnet-indexed data on testnet.
+    enabled: CHARTS_AVAILABLE && !!poolId && !!tokenId,
     refetchInterval: POLL.stats,
     retry: 1,
   });
@@ -418,7 +425,7 @@ export function useAllPoolStats(tokens: TokenConfig[] | undefined) {
   return useQuery({
     queryKey: ["pool-stats-many", pools.map((p) => p.poolId).join(",")],
     queryFn: ({ signal }) => gecko.manyPoolStats(pools, signal),
-    enabled: pools.length > 0,
+    enabled: CHARTS_AVAILABLE && pools.length > 0,
     refetchInterval: POLL.stats,
     retry: 1,
   });
@@ -433,7 +440,7 @@ export function useCandles(
   return useQuery({
     queryKey: ["candles", poolId, timeframe, side],
     queryFn: ({ signal }) => gecko.candles(poolId!, tf, side!, 300, signal),
-    enabled: !!poolId && !!side,
+    enabled: CHARTS_AVAILABLE && !!poolId && !!side,
     refetchInterval: tf.pollMs,
     retry: 1,
   });
@@ -443,7 +450,7 @@ export function usePoolTrades(poolId: string | undefined, side: gecko.GtSide | u
   return useQuery({
     queryKey: ["pool-trades", poolId, side],
     queryFn: ({ signal }) => gecko.poolTrades(poolId!, side!, signal),
-    enabled: !!poolId && !!side,
+    enabled: CHARTS_AVAILABLE && !!poolId && !!side,
     refetchInterval: POLL.stats,
     retry: 1,
   });

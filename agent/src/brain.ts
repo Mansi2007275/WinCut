@@ -13,7 +13,7 @@
  * `risk.ts` decides whether it becomes a transaction.
  */
 
-import { LLM_API_KEY, LLM_BASE_URL, LLM_MODEL, RISK } from "./config.js";
+import { FALLBACK, LLM_API_KEY, LLM_BASE_URL, LLM_MODEL, RISK } from "./config.js";
 import type { MarketView } from "./market.js";
 import type { PositionState, Proposal } from "./risk.js";
 
@@ -161,8 +161,8 @@ export function fallbackDecision(
   states: PositionState[],
   balanceUsdc: number,
 ): Proposal {
-  const ENTER_PCT = 1.5;
-  const EXIT_PCT = -1.5;
+  const ENTER_PCT = FALLBACK.enterPct;
+  const EXIT_PCT = FALLBACK.exitPct;
 
   const held = new Map(states.map((s) => [s.position.token_id, s]));
 

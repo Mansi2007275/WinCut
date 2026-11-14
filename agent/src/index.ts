@@ -14,8 +14,8 @@
  */
 
 import {
-  AGENT_ACCOUNT_ID, CONTRACT_ID, DRY_RUN, LOOP_MS, NETWORK, REF_CONTRACT,
-  RISK, RUN_ONCE, SLIPPAGE_BPS, USDC_DECIMALS, describeConfig,
+  AGENT_ACCOUNT_ID, CONTRACT_ID, DRY_RUN, LOOP_MS, NETWORK, PRIMARY_MARKET_TOKEN_ID,
+  REF_CONTRACT, RISK, RUN_ONCE, SLIPPAGE_BPS, TIMEFRAME, USDC_DECIMALS, describeConfig,
 } from "./config.js";
 import {
   callBuy, callSell, explorerTx, getBalance, getPositions, getTokens, getTradesOf,
@@ -120,7 +120,13 @@ async function execute(
 
 async function pass(): Promise<void> {
   const tokens = await getTokens();
-  const tradable = tokens.filter((t) => t.registered);
+  // The primary market first. The model reads these in order, and a market with
+  // real history should not be buried behind six that have none.
+  const tradable = tokens
+    .filter((t) => t.registered)
+    .sort((a, b) =>
+      a.token_id === PRIMARY_MARKET_TOKEN_ID ? -1 : b.token_id === PRIMARY_MARKET_TOKEN_ID ? 1 : 0,
+    );
   if (!tradable.length) {
     log("no registered markets on the contract - nothing to decide");
     return;
@@ -160,7 +166,8 @@ async function pass(): Promise<void> {
 
   log(
     `balance ${balanceUsdc.toFixed(2)} tUSDC · ${states.length} position(s) · ` +
-    `${tradesLast24h}/${RISK.maxTradesPerDay} trades today · ${markets.length} market(s) read`,
+    `${tradesLast24h}/${RISK.maxTradesPerDay} trades today · ${markets.length} market(s) read ` +
+    `· ${TIMEFRAME} candles`,
   );
   for (const m of markets) {
     log(
