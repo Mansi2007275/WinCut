@@ -23,8 +23,8 @@ import {
   usePoolStats,
   usePoolTrades,
   usePosition,
+  useMarket,
   useRoute,
-  useTokens,
 } from "@/lib/queries";
 import { useWallet } from "@/lib/wallet";
 import { useReferral } from "@/lib/referral";
@@ -47,8 +47,8 @@ function TradeScreen({ tokenId }: { tokenId: string }) {
   const { accountId } = useWallet();
   const { follow, referrer } = useReferral();
 
-  const tokens = useTokens();
-  const token = tokens.data?.find((t) => t.token_id === tokenId);
+  const market = useMarket(tokenId);
+  const token = market.token;
 
   const [timeframe, setTimeframe] = useState<TimeframeKey>("15m");
   const [followed, setFollowed] = useState<string | null>(null);
@@ -104,10 +104,41 @@ function TradeScreen({ tokenId }: { tokenId: string }) {
     };
   }, [position.data, token?.decimals, route.data, myTrades.data, tokenId]);
 
-  if (tokens.isPending) {
+  if (market.pending) {
     return (
       <Page width="full">
-        <Loading label="Loading markets" />
+        <Loading label="Loading market" />
+      </Page>
+    );
+  }
+
+  // Not the same page as "not listed", and it must not look like one. The
+  // contract could not be reached, so whether this token exists is unknown -
+  // and a page that guesses "it does not" while an endpoint is rate-limiting
+  // is telling the user something it has no evidence for.
+  if (market.unreachable) {
+    return (
+      <Page width="lg">
+        <Card className="p-4">
+          <h1 className="text-sm font-semibold">Could not reach a NEAR endpoint</h1>
+          <p className="mt-1.5 text-[11px] leading-relaxed text-secondary">
+            Every read endpoint refused, so WinCut cannot tell you whether{" "}
+            <code className="text-text">{tokenId}</code> is listed. This is usually a rate limit
+            on a free endpoint and clears within a minute — it is not a statement about the
+            market.
+          </p>
+          {market.error && (
+            <p className="mt-1.5 break-words text-[10px] leading-relaxed text-secondary">
+              {market.error.message}
+            </p>
+          )}
+          <button
+            onClick={market.refetch}
+            className="tap mt-3 rounded-btn border border-border px-3 py-1.5 text-[12px] font-medium hover:bg-elevated"
+          >
+            Try again
+          </button>
+        </Card>
       </Page>
     );
   }
@@ -118,8 +149,9 @@ function TradeScreen({ tokenId }: { tokenId: string }) {
         <Card className="p-4">
           <h1 className="text-sm font-semibold">That token is not listed on WinCut</h1>
           <p className="mt-1.5 text-[11px] leading-relaxed text-secondary">
-            <code className="text-text">{tokenId}</code> has no route on the contract, so there is
-            no way to trade it here. The listed markets are on{" "}
+            The contract was read and has no route for{" "}
+            <code className="text-text">{tokenId}</code>, so there is no way to trade it here. The
+            listed markets are on{" "}
             <Link href="/trade" className="text-accent hover:underline">
               the markets page
             </Link>

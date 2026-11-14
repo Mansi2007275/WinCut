@@ -131,7 +131,64 @@ export function useTokens(): UseQueryResult<TokenConfig[]> {
         .sort((a, b) => (order.get(a.token_id) ?? 0) - (order.get(b.token_id) ?? 0));
     },
     staleTime: 5 * 60_000,
+    // Every endpoint has to refuse four times running before a screen is
+    // allowed to conclude anything from the absence of this list. One 429 from
+    // a shared free tier used to be enough.
+    retry: 3,
+    retryDelay: (n) => Math.min(1000 * 2 ** n, 8000),
   });
+}
+
+/**
+ * One market, looked up the way a deep link needs it.
+ *
+ * `useTokens` answers a different question - which markets this deployment
+ * offers, in which order - and it filters by `NEXT_PUBLIC_TOKENS`. A URL is
+ * not a menu: somebody following a link to a token that is listed on the
+ * contract but absent from that env var should get the market, not a page
+ * telling them it does not exist. So this falls back to asking the contract
+ * about that one token directly.
+ *
+ * The three outcomes are kept distinct, because a screen that collapses them
+ * tells the user something false:
+ *
+ *   `token` - it is listed, here it is.
+ *   `missing` - the contract was reached and does not have it.
+ *   `unreachable` - nothing could be read, so nothing is known either way.
+ */
+export function useMarket(tokenId: string | undefined) {
+  const tokens = useTokens();
+  const listed = useMemo(
+    () => tokens.data?.find((t) => t.token_id === tokenId),
+    [tokens.data, tokenId],
+  );
+
+  const direct = useQuery({
+    queryKey: ["token", tokenId],
+    queryFn: ({ signal }) => contract.getToken(tokenId!, signal),
+    // Only when the list was read successfully and did not contain it.
+    enabled: isDeployed && !!tokenId && tokens.isSuccess && !listed,
+    staleTime: 5 * 60_000,
+    retry: 3,
+    retryDelay: (n) => Math.min(1000 * 2 ** n, 8000),
+  });
+
+  const token = listed ?? direct.data ?? undefined;
+  const pending = tokens.isPending || (tokens.isSuccess && !listed && direct.isPending);
+  const unreachable = !token && !pending && (tokens.isError || direct.isError);
+
+  return {
+    token,
+    pending,
+    unreachable,
+    /** Reached the contract, and it has no such token. */
+    missing: !token && !pending && !unreachable,
+    error: (tokens.error ?? direct.error) as Error | undefined,
+    refetch: () => {
+      void tokens.refetch();
+      void direct.refetch();
+    },
+  };
 }
 
 /** The verified mainnet routes, as the contract would report them. */

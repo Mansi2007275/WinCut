@@ -15,7 +15,8 @@ import { usePathname } from "next/navigation";
 import { useWallet } from "@/lib/wallet";
 import { useBlockHeight, useInternalBalance, useLossCredit } from "@/lib/queries";
 import { shortAccount, usd } from "@/lib/format";
-import { NETWORK, isDeployed } from "@/lib/near";
+import { CHARTS_AVAILABLE, NETWORK, REF_CONTRACT, isDeployed } from "@/lib/near";
+import { explorerAccount } from "@/lib/explorer";
 import { ConnectCta, NotDeployedBanner, WalletErrorBanner } from "./Gate";
 
 /* -------------------------------------------------------------------- icons
@@ -319,12 +320,12 @@ function Footer() {
       <p>
         Swaps on{" "}
         <a
-          href="https://nearblocks.io/address/v2.ref-finance.near"
+          href={explorerAccount(REF_CONTRACT)}
           target="_blank"
           rel="noreferrer"
           className="underline underline-offset-2 hover:text-text"
         >
-          Rhea Finance
+          {NETWORK === "mainnet" ? "Rhea Finance" : "Ref Finance (testnet)"}
         </a>{" "}
         · settled on NEAR {NETWORK} ·{" "}
         <Link href="/how-it-works" className="text-accent underline-offset-2 hover:underline">
@@ -332,7 +333,13 @@ function Footer() {
         </Link>
       </p>
       <p className="mt-0.5">
-        Candles from GeckoTerminal. Prices, depth, balances and fees read straight off chain.
+        {/* GeckoTerminal indexes mainnet only. On testnet the candles are built
+            from pool prices this app read itself, and saying otherwise in the
+            footer would contradict what the chart's own panel says. */}
+        {CHARTS_AVAILABLE
+          ? "Candles from GeckoTerminal."
+          : "Candles built from pool prices read on chain."}{" "}
+        Prices, depth, balances and fees read straight off chain.
       </p>
     </footer>
   );
