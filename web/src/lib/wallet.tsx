@@ -65,6 +65,37 @@ const WalletContext = createContext<WalletState | null>(null);
 
 const TGAS = 1_000_000_000_000n;
 
+/**
+ * The wallet selector's own RPC, pinned rather than defaulted.
+ *
+ * `network: "testnet"` makes the selector use its built-in config, whose
+ * nodeUrl is FastNEAR - the same free endpoint the bots and the agent are
+ * already spending. `fallbackRpcUrls` below does not help with that: a
+ * fallback is only consulted after the primary has failed, so every wallet
+ * call still opens with a request to the endpoint most likely to refuse it,
+ * and a 429 during a signing flow is a failed trade rather than a slow one.
+ *
+ * Naming the whole network object puts the browser's first choice on the same
+ * endpoint the rest of the app reads from, with the selector's defaults kept
+ * as the fallbacks.
+ */
+const SELECTOR_NETWORK =
+  NETWORK === "mainnet"
+    ? {
+        networkId: "mainnet",
+        nodeUrl: rpcEndpoints[0]!,
+        helperUrl: "https://helper.mainnet.near.org",
+        explorerUrl: "https://nearblocks.io",
+        indexerUrl: "https://api.kitwallet.app",
+      }
+    : {
+        networkId: "testnet",
+        nodeUrl: rpcEndpoints[0]!,
+        helperUrl: "https://helper.testnet.near.org",
+        explorerUrl: "https://testnet.nearblocks.io",
+        indexerUrl: "https://testnet-api.kitwallet.app",
+      };
+
 export function WalletProvider({ children }: { children: ReactNode }) {
   const [selector, setSelector] = useState<WalletSelector | null>(null);
   const modalRef = useRef<WalletSelectorModal | null>(null);
@@ -80,7 +111,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     (async () => {
       try {
         const instance = await setupWalletSelector({
-          network: NETWORK,
+          network: SELECTOR_NETWORK,
           modules: [setupHotWallet(), setupMeteorWallet(), setupMyNearWallet()],
           fallbackRpcUrls: rpcEndpoints,
           ...(isDeployed
