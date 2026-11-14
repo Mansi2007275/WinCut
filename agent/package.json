@@ -1,0 +1,22 @@
+{
+  "name": "wincut-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "An autonomous trader that trades through WinCut and earns only when the people copying it profit.",
+  "scripts": {
+    "start": "node --env-file-if-exists=.env --import tsx src/index.ts",
+    "once": "node --env-file-if-exists=.env --import tsx src/index.ts --once",
+    "dry": "node --env-file-if-exists=.env --import tsx src/index.ts --once --dry",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx test/risk.test.ts && node --import tsx test/brain.test.ts && node --import tsx test/rpc.test.ts"
+  },
+  "dependencies": {
+    "near-api-js": "7.4.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "tsx": "^4.19.2",
+    "typescript": "^5"
+  }
+}

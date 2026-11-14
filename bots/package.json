@@ -1,0 +1,24 @@
+{
+  "name": "wincut-bots",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "description": "WinCut's own market maker and trader bots, which make real trades on testnet so the charts have a real market to show",
+  "scripts": {
+    "bots": "node --env-file-if-exists=.env --import tsx src/index.ts",
+    "once": "node --env-file-if-exists=.env --import tsx src/index.ts --once",
+    "dry": "node --env-file-if-exists=.env --import tsx src/index.ts --once --dry",
+    "peg": "node --env-file-if-exists=.env --import tsx src/peg.ts",
+    "typecheck": "tsc --noEmit",
+    "plan": "node --env-file-if-exists=.env --import tsx src/plan.ts",
+    "test": "node --import tsx test/rpc.test.ts"
+  },
+  "dependencies": {
+    "near-api-js": "7.4.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "tsx": "^4.19.2",
+    "typescript": "^5"
+  }
+}

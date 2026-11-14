@@ -25,6 +25,8 @@ import {
 } from "@/lib/queries";
 import { useWallet } from "@/lib/wallet";
 import { isDeployed } from "@/lib/near";
+import { isAgent } from "@/lib/agent";
+import { isBot, isMarketMaker } from "@/lib/bots";
 import { claimEarnings } from "@/lib/actions";
 import { useToast } from "./Toast";
 import { ConnectCta, NeedsContract } from "./Gate";
@@ -244,8 +246,15 @@ export function LeaderboardList({ rows }: { rows: LeaderboardRow[] }) {
               </span>
               <Avatar address={row.account_id} size={28} />
               <span className="min-w-0 flex-1">
-                <span className="num block truncate text-[13px] font-medium">
-                  {shortAccount(row.account_id)}
+                <span className="flex items-center gap-1.5">
+                  <span className="num truncate text-[13px] font-medium">
+                    {shortAccount(row.account_id)}
+                  </span>
+                  {/* Marked on the board too, not only on its own page: this is
+                      the screen people pick a trader to copy from. */}
+                  {isAgent(row.account_id) && <Badge tone="accent">AI Agent</Badge>}
+                  {isBot(row.account_id) && <Badge tone="neutral">Bot</Badge>}
+                  {isMarketMaker(row.account_id) && <Badge tone="neutral">Market maker</Badge>}
                 </span>
                 <span className="block text-[10px] text-secondary">
                   {row.trades} trades · {row.wins}W / {row.losses}L · {row.followers} copying

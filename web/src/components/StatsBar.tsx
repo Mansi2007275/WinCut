@@ -12,13 +12,13 @@
 
 import Link from "next/link";
 import type { PoolStats } from "@/lib/gecko";
-import type { Route } from "@/lib/queries";
+import type { Activity, Route } from "@/lib/queries";
 import type { TokenConfig } from "@/lib/contract";
 import { price as fmtPrice, pct, usd, usdCompact } from "@/lib/format";
 import { useWallet } from "@/lib/wallet";
 import { useLossCredit } from "@/lib/queries";
 import { explorerToken } from "@/lib/explorer";
-import { isDeployed } from "@/lib/near";
+import { CHARTS_AVAILABLE, isDeployed } from "@/lib/near";
 import { midPriceIsSane } from "@/lib/rhea";
 import { Skeleton } from "./ui";
 
@@ -27,11 +27,13 @@ export function StatsBar({
   route,
   stats,
   statsError,
+  activity,
 }: {
   token: TokenConfig;
   route: Route | undefined;
   stats: PoolStats | undefined;
   statsError: boolean;
+  activity?: Activity;
 }) {
   const { accountId } = useWallet();
   const credit = useLossCredit(accountId);
@@ -88,13 +90,26 @@ export function StatsBar({
 
         <Stat
           label="24h volume"
-          title="Traded volume on this Rhea pool over the last 24 hours, from GeckoTerminal"
+          title={
+            CHARTS_AVAILABLE
+              ? "Traded volume on this Rhea pool over the last 24 hours, from GeckoTerminal"
+              : "Everything settled through WinCut on this market in the last 24 hours, from the contract's own trade log, plus the market maker's swaps on Rhea. Not an indexer's estimate - the notionals the trades actually carried."
+          }
           value={
-            statsError
-              ? "unavailable"
-              : stats
-                ? usdCompact(stats.volume24hUsd)
+            CHARTS_AVAILABLE
+              ? statsError
+                ? "unavailable"
+                : stats
+                  ? usdCompact(stats.volume24hUsd)
+                  : undefined
+              : activity
+                ? usdCompact(activity.volume24hUsd)
                 : undefined
+          }
+          sub={
+            !CHARTS_AVAILABLE && activity
+              ? `${activity.count} trade${activity.count === 1 ? "" : "s"}${activity.truncated ? ", at least" : ""}`
+              : undefined
           }
         />
 

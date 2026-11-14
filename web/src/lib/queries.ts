@@ -21,12 +21,16 @@ import { useCallback, useMemo } from "react";
 import markets from "@/config/markets.json";
 import * as contract from "./contract";
 import type { TokenConfig } from "./contract";
+import * as agentLib from "./agent";
 import * as gecko from "./gecko";
 import * as rhea from "./rhea";
+import { toNumber } from "./format";
 import {
+  CONTRACT_ID,
   TOKEN_IDS,
   USDC_DECIMALS,
   USDC_ID,
+  CHARTS_AVAILABLE,
   blockHeight,
   ftBalanceOf,
   ftDecimals,
@@ -127,7 +131,64 @@ export function useTokens(): UseQueryResult<TokenConfig[]> {
         .sort((a, b) => (order.get(a.token_id) ?? 0) - (order.get(b.token_id) ?? 0));
     },
     staleTime: 5 * 60_000,
+    // Every endpoint has to refuse four times running before a screen is
+    // allowed to conclude anything from the absence of this list. One 429 from
+    // a shared free tier used to be enough.
+    retry: 3,
+    retryDelay: (n) => Math.min(1000 * 2 ** n, 8000),
   });
+}
+
+/**
+ * One market, looked up the way a deep link needs it.
+ *
+ * `useTokens` answers a different question - which markets this deployment
+ * offers, in which order - and it filters by `NEXT_PUBLIC_TOKENS`. A URL is
+ * not a menu: somebody following a link to a token that is listed on the
+ * contract but absent from that env var should get the market, not a page
+ * telling them it does not exist. So this falls back to asking the contract
+ * about that one token directly.
+ *
+ * The three outcomes are kept distinct, because a screen that collapses them
+ * tells the user something false:
+ *
+ *   `token` - it is listed, here it is.
+ *   `missing` - the contract was reached and does not have it.
+ *   `unreachable` - nothing could be read, so nothing is known either way.
+ */
+export function useMarket(tokenId: string | undefined) {
+  const tokens = useTokens();
+  const listed = useMemo(
+    () => tokens.data?.find((t) => t.token_id === tokenId),
+    [tokens.data, tokenId],
+  );
+
+  const direct = useQuery({
+    queryKey: ["token", tokenId],
+    queryFn: ({ signal }) => contract.getToken(tokenId!, signal),
+    // Only when the list was read successfully and did not contain it.
+    enabled: isDeployed && !!tokenId && tokens.isSuccess && !listed,
+    staleTime: 5 * 60_000,
+    retry: 3,
+    retryDelay: (n) => Math.min(1000 * 2 ** n, 8000),
+  });
+
+  const token = listed ?? direct.data ?? undefined;
+  const pending = tokens.isPending || (tokens.isSuccess && !listed && direct.isPending);
+  const unreachable = !token && !pending && (tokens.isError || direct.isError);
+
+  return {
+    token,
+    pending,
+    unreachable,
+    /** Reached the contract, and it has no such token. */
+    missing: !token && !pending && !unreachable,
+    error: (tokens.error ?? direct.error) as Error | undefined,
+    refetch: () => {
+      void tokens.refetch();
+      void direct.refetch();
+    },
+  };
 }
 
 /** The verified mainnet routes, as the contract would report them. */
@@ -399,7 +460,13 @@ export function usePoolStats(poolId: string | undefined, tokenId: string | undef
   return useQuery({
     queryKey: ["pool-stats", poolId, tokenId],
     queryFn: ({ signal }) => gecko.poolStats(poolId!, tokenId!, signal),
-    enabled: !!poolId && !!tokenId,
+    // Gated on CHARTS_AVAILABLE, not just on there being a pool id. A testnet
+    // token may legitimately carry a chart_pool as a record of which pool its
+    // series belongs to, and GeckoTerminal indexes mainnet only - so without
+    // this the app would poll an indexer that cannot know about the pool, for
+    // every viewer, forever. Gating here rather than blanking the config makes
+    // the app structurally unable to show mainnet-indexed data on testnet.
+    enabled: CHARTS_AVAILABLE && !!poolId && !!tokenId,
     refetchInterval: POLL.stats,
     retry: 1,
   });
@@ -417,7 +484,7 @@ export function useAllPoolStats(tokens: TokenConfig[] | undefined) {
   return useQuery({
     queryKey: ["pool-stats-many", pools.map((p) => p.poolId).join(",")],
     queryFn: ({ signal }) => gecko.manyPoolStats(pools, signal),
-    enabled: pools.length > 0,
+    enabled: CHARTS_AVAILABLE && pools.length > 0,
     refetchInterval: POLL.stats,
     retry: 1,
   });
@@ -432,7 +499,7 @@ export function useCandles(
   return useQuery({
     queryKey: ["candles", poolId, timeframe, side],
     queryFn: ({ signal }) => gecko.candles(poolId!, tf, side!, 300, signal),
-    enabled: !!poolId && !!side,
+    enabled: CHARTS_AVAILABLE && !!poolId && !!side,
     refetchInterval: tf.pollMs,
     retry: 1,
   });
@@ -442,7 +509,7 @@ export function usePoolTrades(poolId: string | undefined, side: gecko.GtSide | u
   return useQuery({
     queryKey: ["pool-trades", poolId, side],
     queryFn: ({ signal }) => gecko.poolTrades(poolId!, side!, signal),
-    enabled: !!poolId && !!side,
+    enabled: CHARTS_AVAILABLE && !!poolId && !!side,
     refetchInterval: POLL.stats,
     retry: 1,
   });
@@ -547,4 +614,151 @@ export function useRefreshAfterTrade(accountId: string | null) {
     const timers = [2_500, 6_000, 12_000].map((ms) => setTimeout(invalidate, ms));
     return () => timers.forEach(clearTimeout);
   }, [qc, accountId]);
+}
+
+// ------------------------------------------------------------------ the agent
+
+/**
+ * The agent's decision log.
+ *
+ * Polled on the same five-minute cadence the agent decides on, plus a little
+ * slack, so a page left open stays current without asking far more often than
+ * the thing it is watching can change.
+ */
+export function useAgentLog(enabled = true, limit = 40) {
+  return useQuery<agentLib.AgentLog>({
+    queryKey: ["agent-log", limit],
+    queryFn: async ({ signal }) => {
+      const res = await fetch(`/api/agent/log?limit=${limit}`, { signal, cache: "no-store" });
+      const body = await res.json();
+      if (!res.ok) {
+        throw new Error(body?.detail ?? body?.error ?? `agent log responded ${res.status}`);
+      }
+      return body as agentLib.AgentLog;
+    },
+    enabled: enabled && Boolean(agentLib.AGENT_ACCOUNT_ID),
+    refetchInterval: 60_000,
+    retry: 1,
+  });
+}
+
+/**
+ * 24h volume and pressure for one market, computed from what settled rather
+ * than from an indexer. Used on testnet, where nothing indexes the pool but
+ * WinCut knows exactly what traded through it.
+ */
+export type Activity = {
+  volume24hUsd: number;
+  buys: number;
+  sells: number;
+  buyPct: number | null;
+  count: number;
+  wincutCount: number;
+  makerCount: number;
+  makerVolume: number;
+  sources: string[];
+  truncated: boolean;
+  source: string;
+};
+
+export function useActivity(tokenId: string | undefined, poolKey: string | undefined, enabled: boolean) {
+  return useQuery<Activity>({
+    queryKey: ["activity", tokenId, poolKey],
+    queryFn: async ({ signal }) => {
+      const qs = new URLSearchParams({ token: tokenId! });
+      if (poolKey) qs.set("pool", poolKey);
+      const res = await fetch(`/api/activity?${qs}`, { signal, cache: "no-store" });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body?.detail ?? body?.error ?? `activity responded ${res.status}`);
+      return body as Activity;
+    },
+    enabled: enabled && !!tokenId && isDeployed,
+    refetchInterval: POLL.stats,
+    retry: 1,
+  });
+}
+
+// ------------------------------------------------------------- the cut field
+
+/**
+ * Current banked loss credit for several accounts at once.
+ *
+ * The ring says how much credit each loss *banked*; only the contract knows
+ * how much is still *held*, because a later win spends it. One query so the
+ * dashboard makes a handful of parallel view calls rather than mounting a
+ * hook per account, and so the whole panel has one loading state.
+ */
+export function useLossCredits(accountIds: string[]) {
+  const key = [...accountIds].sort().join(",");
+  return useQuery<Record<string, number>>({
+    queryKey: ["loss-credits", key],
+    queryFn: async ({ signal }) => {
+      const entries = await Promise.all(
+        accountIds.map(async (id) => {
+          try {
+            const raw = await contract.getLossCredit(id, signal);
+            return [id, toNumber(raw, USDC_DECIMALS)] as const;
+          } catch {
+            // One unreadable account must not blank the panel.
+            return [id, NaN] as const;
+          }
+        }),
+      );
+      return Object.fromEntries(entries);
+    },
+    enabled: isDeployed && accountIds.length > 0,
+    refetchInterval: POLL.trades,
+    retry: 1,
+  });
+}
+
+/** What the contract holds against what it owes: the solvency row. */
+export function useSolvency() {
+  return useQuery({
+    queryKey: ["solvency"],
+    queryFn: async ({ signal }) => {
+      const accounted = await contract.getUsdcAccounted(signal);
+      return toNumber(accounted, USDC_DECIMALS);
+    },
+    enabled: isDeployed,
+    refetchInterval: 30_000,
+    retry: 1,
+  });
+}
+
+/**
+ * The whole trade ring, on the dashboard's own cadence.
+ *
+ * Separate from `useRecentTrades` because the two want different things: a
+ * feed wants the newest few often, and the dashboard wants all 500 less
+ * often. Sharing one hook would have meant re-reading the entire ring every
+ * eight seconds for every viewer of a public page.
+ */
+export function useTradeRing(limit = 500) {
+  return useQuery({
+    queryKey: ["trade-ring", limit],
+    queryFn: ({ signal }) => contract.getRecentTrades(0, limit, signal),
+    enabled: isDeployed,
+    refetchInterval: 15_000,
+    retry: 1,
+  });
+}
+
+/**
+ * The USDC the contract actually holds, asked of the token rather than of the
+ * contract. Paired with `useSolvency`, which asks the contract what it thinks
+ * it owes: two independent reads, and the comparison is only worth anything
+ * because they come from different places.
+ */
+export function useContractUsdcHeld() {
+  return useQuery({
+    queryKey: ["contract-usdc-held"],
+    queryFn: async ({ signal }) => {
+      const raw = await ftBalanceOf(USDC_ID, CONTRACT_ID, signal);
+      return toNumber(raw, USDC_DECIMALS);
+    },
+    enabled: isDeployed,
+    refetchInterval: 30_000,
+    retry: 1,
+  });
 }

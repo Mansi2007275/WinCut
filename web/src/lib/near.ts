@@ -66,14 +66,36 @@ export const NO_CHARTS_REASON =
  * FastNEAR's free tier throttles a browser doing real polling, which is why
  * there are three.
  */
+/**
+ * Read endpoints, in the order the browser tries them.
+ *
+ * On testnet dRPC leads rather than FastNEAR, and that order was chosen from a
+ * symptom rather than a preference: FastNEAR's free tier meters by source IP,
+ * and the bots process, the agent process and the viewer's own browser all
+ * share one IP during a demo. The browser is the one that loses - it arrives
+ * last and gets the 429, so a wallet flow fails on a page that was working a
+ * second earlier. Giving the browser a different first endpoint than the two
+ * server processes use means they stop competing for the same bucket.
+ *
+ * `NEXT_PUBLIC_RPC_URL` still wins when it is set, and every endpoint below it
+ * remains a fallback, so this is an ordering change and not a narrowing.
+ */
 const RPC_ENDPOINTS: string[] = Array.from(
   new Set(
-    [
-      process.env.NEXT_PUBLIC_RPC_URL,
-      NETWORK === "mainnet" ? "https://free.rpc.fastnear.com" : "https://test.rpc.fastnear.com",
-      NETWORK === "mainnet" ? "https://rpc.mainnet.near.org" : "https://rpc.testnet.near.org",
-      NETWORK === "mainnet" ? "https://near.lava.build" : undefined,
-    ].filter((u): u is string => Boolean(u)),
+    (NETWORK === "mainnet"
+      ? [
+          process.env.NEXT_PUBLIC_RPC_URL,
+          "https://free.rpc.fastnear.com",
+          "https://rpc.mainnet.near.org",
+          "https://near.lava.build",
+        ]
+      : [
+          process.env.NEXT_PUBLIC_RPC_URL,
+          "https://near-testnet.drpc.org",
+          "https://test.rpc.fastnear.com",
+          "https://rpc.testnet.near.org",
+        ]
+    ).filter((u): u is string => Boolean(u)),
   ),
 );
 
@@ -105,6 +127,10 @@ async function rpc<T>(method: string, params: unknown, signal?: AbortSignal): Pr
         cache: "no-store",
       });
       if (!res.ok) {
+        // A rate limit is not a dead endpoint, but it is a useless one for the
+        // next little while: advance the rotation so the following call does
+        // not open with the same 429.
+        if (res.status === 429) nextEndpoint = (idx + 1) % RPC_ENDPOINTS.length;
         errors.push(`${url}: HTTP ${res.status}`);
         continue;
       }

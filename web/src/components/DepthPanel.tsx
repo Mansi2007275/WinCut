@@ -10,25 +10,30 @@
  * is what this shows: the price each size would really get, and how far that
  * is from the mid.
  *
- * Underneath, buy/sell pressure from the pool's recent swaps on GeckoTerminal.
+ * Underneath, buy/sell pressure. On mainnet that comes from the pool's recent
+ * swaps on GeckoTerminal. On testnet nothing indexes the pool, but WinCut knows
+ * exactly what settled through it, and the market maker records the swaps it
+ * makes on Rhea - so the panel adds those up instead of saying it cannot know.
  */
 
 import { useMemo } from "react";
 import type { PoolTrade } from "@/lib/gecko";
-import type { Route } from "@/lib/queries";
+import type { Activity, Route } from "@/lib/queries";
 import { depthLadder, type DepthRung } from "@/lib/rhea";
 import { price as fmtPrice, usdCompact } from "@/lib/format";
-import { CHARTS_AVAILABLE, NO_CHARTS_REASON } from "@/lib/near";
+import { CHARTS_AVAILABLE } from "@/lib/near";
 import { Card, SectionHeading, Skeleton } from "./ui";
 
 export function DepthPanel({
   route,
   trades,
+  activity,
   tokenSymbol,
   onPickSize,
 }: {
   route: Route | undefined;
   trades: PoolTrade[] | undefined;
+  activity?: Activity;
   tokenSymbol: string;
   onPickSize?: (usd: number) => void;
 }) {
@@ -41,11 +46,16 @@ export function DepthPanel({
     }
   }, [route]);
 
-  // Only rungs the pool can actually absorb: a $50k ladder rung on a $4k pool
-  // is arithmetically true and practically meaningless, so it is dropped
-  // rather than shown as a -90% fill.
+  // Only rungs the pool can actually absorb. The sizes are already derived
+  // from this pool's reserve, so this is a backstop for a route whose thinnest
+  // hop is not the one the sizes were taken from - and for anything past half
+  // the quote reserve, where a constant-product quote stops describing a trade
+  // anybody would make.
+  const half = ladder && Number.isFinite(ladder.quoteReserve) ? ladder.quoteReserve / 2 : Infinity;
   const usable = (rungs: DepthRung[] | undefined) =>
-    (rungs ?? []).filter((r) => Number.isFinite(r.price) && Math.abs(r.impactPct) < 90);
+    (rungs ?? []).filter(
+      (r) => Number.isFinite(r.price) && Math.abs(r.impactPct) < 90 && r.usd <= half,
+    );
 
   return (
     <Card className="p-0">
@@ -113,7 +123,7 @@ export function DepthPanel({
         </>
       )}
 
-      <Pressure trades={trades} tokenSymbol={tokenSymbol} />
+      <Pressure trades={trades} activity={activity} tokenSymbol={tokenSymbol} />
     </Card>
   );
 }
@@ -172,12 +182,27 @@ function Side({
  */
 function Pressure({
   trades,
+  activity,
   tokenSymbol,
 }: {
   trades: PoolTrade[] | undefined;
+  activity?: Activity;
   tokenSymbol: string;
 }) {
   const totals = useMemo(() => {
+    // Off mainnet the numbers come from settlement rather than an indexer, and
+    // they are better numbers: real notionals from the contract's own trade
+    // ring, plus the maker's swaps, which never touch WinCut at all.
+    if (!CHARTS_AVAILABLE) {
+      if (!activity || activity.volume24hUsd <= 0) return null;
+      return {
+        buys: activity.buys,
+        sells: activity.sells,
+        total: activity.volume24hUsd,
+        buyPct: activity.buyPct ?? 0,
+        count: activity.count,
+      };
+    }
     if (!trades?.length) return null;
     let buys = 0;
     let sells = 0;
@@ -189,7 +214,7 @@ function Pressure({
     const total = buys + sells;
     if (total === 0) return null;
     return { buys, sells, total, buyPct: (buys / total) * 100, count: trades.length };
-  }, [trades]);
+  }, [trades, activity]);
 
   return (
     <div className="border-t border-border px-3 py-3">
@@ -199,18 +224,20 @@ function Pressure({
         </p>
         <p className="text-[10px] text-secondary">
           {totals
-            ? `last ${totals.count} swaps`
+            ? CHARTS_AVAILABLE
+              ? `last ${totals.count} swaps`
+              : `${totals.count} trade${totals.count === 1 ? "" : "s"} in 24h`
             : CHARTS_AVAILABLE
               ? "no recent swaps"
-              : "not available on testnet"}
+              : "nothing traded in 24h"}
         </p>
       </div>
 
-      {!CHARTS_AVAILABLE ? (
-        <p className="mt-1.5 text-[11px] leading-relaxed text-secondary">{NO_CHARTS_REASON}</p>
-      ) : !totals ? (
+      {!totals ? (
         <p className="mt-1.5 text-[11px] leading-relaxed text-secondary">
-          GeckoTerminal has not indexed any recent swaps on this pool. It is quiet, not broken.
+          {CHARTS_AVAILABLE
+            ? "GeckoTerminal has not indexed any recent swaps on this pool. It is quiet, not broken."
+            : "Nothing has traded through WinCut on this market in the last 24 hours."}
         </p>
       ) : (
         <>
@@ -224,6 +251,14 @@ function Pressure({
             </span>
             <span className="num text-loss">{usdCompact(totals.sells)} sold</span>
           </div>
+          {!CHARTS_AVAILABLE && activity && (
+            <p className="mt-1.5 text-[10px] leading-relaxed text-secondary">
+              {activity.source}
+              {activity.makerCount > 0 &&
+                ` · ${activity.makerCount} of them the market maker's, which trade on Rhea and never reach WinCut's log`}
+              {activity.truncated && " · at least this much: the contract keeps its last 500 trades"}
+            </p>
+          )}
         </>
       )}
     </div>

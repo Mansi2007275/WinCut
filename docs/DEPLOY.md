@@ -174,3 +174,24 @@ NEXT_PUBLIC_TOKENS=wrap.near,token.rhealab.near,token.burrow.near,blackdragon.tk
 Candles, 24h volume and swap pressure go back to GeckoTerminal, prices render as `$` instead of
 `tUSDC`, the testnet badge disappears, and the sampler and backfill routes start refusing calls
 as testnet-only. Upstash and `CRON_SECRET` can stay set; nothing reads them on mainnet.
+
+## The autonomous agent (optional)
+
+The agent is a separate long-running process that lives in `agent/`, not part
+of this deployment. It needs no inbound port, so it does not belong on Vercel;
+`agent/README.md` covers Railway, Render, a VPS and a Codespace.
+
+Two things connect it to this app:
+
+| Where | Variable | Why |
+| --- | --- | --- |
+| Vercel | `NEXT_PUBLIC_AGENT_ACCOUNT_ID` | The agent's account id. Set it and the app marks that trader as an AI agent and shows its decision log. Leave it empty and nothing about the agent appears. |
+| The agent's host | `UPSTASH_REDIS_REST_URL` / `_TOKEN` | Point the agent at the **same** Upstash database as this app, so `/trader/<agent>` reads what the agent writes. |
+
+`NEXT_PUBLIC_AGENT_ACCOUNT_ID` is inlined at build time like every other
+`NEXT_PUBLIC_` value, so changing it needs a redeploy, not just a restart.
+
+Nothing else is required here: the agent trades through the contract, so its
+balances, positions, trades, followers and earnings are already readable by the
+app the way any other trader's are. The only thing Upstash adds is the
+reasoning.

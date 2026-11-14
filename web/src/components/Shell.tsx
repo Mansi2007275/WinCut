@@ -15,7 +15,8 @@ import { usePathname } from "next/navigation";
 import { useWallet } from "@/lib/wallet";
 import { useBlockHeight, useInternalBalance, useLossCredit } from "@/lib/queries";
 import { shortAccount, usd } from "@/lib/format";
-import { NETWORK, isDeployed } from "@/lib/near";
+import { CHARTS_AVAILABLE, NETWORK, REF_CONTRACT, isDeployed } from "@/lib/near";
+import { explorerAccount } from "@/lib/explorer";
 import { ConnectCta, NotDeployedBanner, WalletErrorBanner } from "./Gate";
 
 /* -------------------------------------------------------------------- icons
@@ -52,6 +53,13 @@ const Bars = ({ className }: IconProps) => (
   </svg>
 );
 
+const Field = ({ className }: IconProps) => (
+  <svg viewBox="0 0 24 24" fill="none" className={className} aria-hidden>
+    <path d="M3 17.5 9 14l4 2.2 8-4.7" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M4 7v4m5-6v6m5-3v3m5-7v7" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+  </svg>
+);
+
 const Person = ({ className }: IconProps) => (
   <svg viewBox="0 0 24 24" fill="none" className={className} aria-hidden>
     <circle cx="12" cy="8.5" r="3.5" stroke="currentColor" strokeWidth="1.6" />
@@ -67,6 +75,7 @@ const Person = ({ className }: IconProps) => (
 const tabs = [
   { href: "/", label: "Discover", Icon: Compass },
   { href: "/trade", label: "Trade", Icon: Candles },
+  { href: "/dashboard", label: "The Cut Field", short: "Field", Icon: Field },
   { href: "/board", label: "Traders", Icon: Bars },
   { href: "/me", label: "Me", Icon: Person },
 ] as const;
@@ -76,6 +85,7 @@ function isActive(path: string, href: string) {
   if (href === "/") return path === "/";
   if (href === "/trade") return path.startsWith("/trade");
   if (href === "/board") return path === "/board" || path.startsWith("/trader");
+  if (href === "/dashboard") return path.startsWith("/dashboard");
   return path === href;
 }
 
@@ -220,20 +230,24 @@ export function BottomNav() {
       style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
     >
       <div className="mx-auto flex max-w-md">
-        {tabs.map(({ href, label, Icon }) => {
+        {tabs.map((tab) => {
+          const { href, label, Icon } = tab;
           const active = isActive(path, href);
           return (
             <Link
               key={href}
               href={href}
+              aria-label={label}
               aria-current={active ? "page" : undefined}
               className={`tap flex flex-1 flex-col items-center justify-center gap-1 py-2.5 transition-colors duration-150 ${
                 active ? "text-text" : "text-secondary"
               }`}
             >
               <Icon className="h-[22px] w-[22px]" />
-              <span className={`text-[11px] ${active ? "font-semibold" : "font-medium"}`}>
-                {label}
+              {/* Five tabs at 390px: the long name goes in aria-label and the
+                  short one on screen, rather than truncating mid-word. */}
+              <span className={`text-[10.5px] ${active ? "font-semibold" : "font-medium"}`}>
+                {"short" in tab ? tab.short : label}
               </span>
             </Link>
           );
@@ -306,12 +320,12 @@ function Footer() {
       <p>
         Swaps on{" "}
         <a
-          href="https://nearblocks.io/address/v2.ref-finance.near"
+          href={explorerAccount(REF_CONTRACT)}
           target="_blank"
           rel="noreferrer"
           className="underline underline-offset-2 hover:text-text"
         >
-          Rhea Finance
+          {NETWORK === "mainnet" ? "Rhea Finance" : "Ref Finance (testnet)"}
         </a>{" "}
         · settled on NEAR {NETWORK} ·{" "}
         <Link href="/how-it-works" className="text-accent underline-offset-2 hover:underline">
@@ -319,7 +333,13 @@ function Footer() {
         </Link>
       </p>
       <p className="mt-0.5">
-        Candles from GeckoTerminal. Prices, depth, balances and fees read straight off chain.
+        {/* GeckoTerminal indexes mainnet only. On testnet the candles are built
+            from pool prices this app read itself, and saying otherwise in the
+            footer would contradict what the chart's own panel says. */}
+        {CHARTS_AVAILABLE
+          ? "Candles from GeckoTerminal."
+          : "Candles built from pool prices read on chain."}{" "}
+        Prices, depth, balances and fees read straight off chain.
       </p>
     </footer>
   );

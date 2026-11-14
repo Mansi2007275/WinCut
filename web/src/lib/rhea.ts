@@ -171,13 +171,57 @@ export type DepthRung = {
  * live reserves. The buy side spends USDC; the sell side is sized in USDC of
  * notional and converted to tokens at the mid price first.
  */
+/**
+ * Sizes worth quoting against a pool of this depth.
+ *
+ * A fixed ladder only works if every pool is roughly the same size, and they
+ * are not: the same $5,000 rung that is unremarkable on a deep mainnet pool is
+ * most of a small testnet one, and quoting it produces a -83% fill that is
+ * arithmetically correct and tells the reader nothing except that the number
+ * was chosen without looking at the pool.
+ *
+ * So the ladder is derived from the quote-side reserve instead, on a 1-2.5-5
+ * progression, spanning roughly 0.5% to 25% of it. The top of that range is
+ * already a quarter of the pool and fills several percent away from the mid;
+ * going further produces rungs that are arithmetically true and that nobody
+ * would ever trade, which is how the fixed ladder got into trouble in the
+ * first place. Anything past half the reserve is dropped outright by the
+ * caller.
+ */
+export function ladderSizes(quoteReserve: number, rungs = 6): number[] {
+  if (!Number.isFinite(quoteReserve) || quoteReserve <= 0) {
+    return [100, 500, 1_000, 5_000, 10_000, 50_000];
+  }
+  const max = quoteReserve * 0.25;
+  const min = Math.max(1, quoteReserve * 0.005);
+
+  const steps: number[] = [];
+  for (let decade = -2; decade <= 9; decade++) {
+    for (const m of [1, 2.5, 5]) {
+      const v = m * 10 ** decade;
+      if (v >= min && v <= max) steps.push(Number(v.toPrecision(3)));
+    }
+  }
+  if (steps.length < 3) {
+    // A pool too shallow for a spread of sizes still deserves a few honest
+    // rungs rather than a fixed ladder it cannot absorb.
+    return [max / 8, max / 4, max / 2, max].map((v) => Number(v.toPrecision(2))).filter((v) => v > 0);
+  }
+  return steps.slice(-rungs);
+}
+
 export function depthLadder(
   buyRoute: PoolSide[],
   sellRoute: PoolSide[],
   tokenDecimals: number,
-  sizes: number[] = [100, 500, 1_000, 5_000, 10_000, 50_000],
-): { buys: DepthRung[]; sells: DepthRung[]; mid: number } {
+  sizes?: number[],
+): { buys: DepthRung[]; sells: DepthRung[]; mid: number; quoteReserve: number } {
   const mid = midPrice(buyRoute, USDC_DECIMALS, tokenDecimals);
+
+  // The quote the first hop actually holds: the depth a buy spends into.
+  const first = buyRoute[0];
+  const quoteReserve = first ? Number(first.reserveIn) / 10 ** USDC_DECIMALS : NaN;
+  sizes = sizes ?? ladderSizes(quoteReserve);
 
   const buys = sizes.map((usd) => {
     const amountIn = BigInt(Math.round(usd * 10 ** USDC_DECIMALS));
@@ -195,7 +239,7 @@ export function depthLadder(
     return { usd, price, impactPct: priceImpactPct(price, mid), out };
   });
 
-  return { buys, sells, mid };
+  return { buys, sells, mid, quoteReserve };
 }
 
 /**
