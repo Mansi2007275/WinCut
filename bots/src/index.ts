@@ -20,12 +20,13 @@
 
 import {
   BOTS, DRY_RUN, LIVE_MARKETS, MARKETS, MM_ACCOUNT_ID, MM_EVERY_MS, MM_PRIVATE_KEY,
-  RUN_ONCE, describeConfig, type MarketConfig,
+  RUN_ONCE, TICK_MS, VIEW_CACHE_MS, describeConfig, type MarketConfig,
 } from "./config.js";
 import { fmtPrice, readNearUsd, readPoolFor } from "./peg.js";
 import { runMaker } from "./mm.js";
 import { PriceHistory, runBot } from "./traders.js";
 import { storePoint, storeConfigured } from "./store.js";
+import { rpcReport } from "./chain.js";
 
 const stamp = () => new Date().toISOString().slice(11, 19);
 const log = (...parts: unknown[]) => console.log(`[${stamp()}]`, ...parts);
@@ -116,7 +117,7 @@ async function tradersPass(due: typeof BOTS): Promise<void> {
         // from. Everything else that could be re-read here is left to the next
         // tick, which is at most 20 seconds away.
         try {
-          const after = await readPoolFor(market);
+          const after = await readPoolFor(market, true);
           history.push(after.price);
           depths.set(market.poolId, after.usdcReserve);
           await storePoint(market.poolId, after.price, "trade");
@@ -128,6 +129,36 @@ async function tradersPass(due: typeof BOTS): Promise<void> {
       log(`  ${bot.accountId.split(".")[0]} ${market.symbol}: pass failed - ${(e as Error).message}`);
     }
   }
+}
+
+/**
+ * What this process is about to ask the network for, per minute.
+ *
+ * Printed because the number was invisible until an endpoint started refusing
+ * calls, and because it is the figure that changes when a market is added. It
+ * counts calls before the cache, then states what the cache is expected to
+ * remove, so both numbers are in front of you rather than one flattering one.
+ */
+function estimateLoad(markets: number): string {
+  const ticksPerMin = 60_000 / TICK_MS;
+  const makerPassesPerMin = 60_000 / MM_EVERY_MS;
+  const botPassesPerMin = BOTS.reduce((s, b) => s + 60_000 / b.everyMs, 0);
+
+  // One get_pool per market per tick.
+  const tickCalls = ticksPerMin * markets;
+  // Per market: our pool, the mainnet NEAR pool, and the token's mainnet pool.
+  const makerCalls = makerPassesPerMin * markets * 3;
+  // Per pass: balance, positions, and one quote.
+  const botCalls = botPassesPerMin * 3;
+  const total = tickCalls + makerCalls + botCalls;
+
+  return (
+    `expecting about ${Math.round(total)} rpc call(s)/min before caching ` +
+    `(${Math.round(tickCalls)} sampling ${markets} market(s) every ${TICK_MS / 1000}s, ` +
+    `${Math.round(makerCalls)} maker every ${MM_EVERY_MS / 1000}s, ` +
+    `${Math.round(botCalls)} from ${BOTS.length} bots) · ` +
+    `a ${VIEW_CACHE_MS / 1000}s cache should remove most of the repeats`
+  );
 }
 
 async function main(): Promise<void> {
@@ -157,6 +188,7 @@ async function main(): Promise<void> {
     log(`${keyless.length} of ${BOTS.length} bots have no key and will only print what they would do`);
   }
   if (DRY_RUN) log("DRY RUN - real data, real decisions, nothing signed");
+  log(estimateLoad(live.length));
 
   try {
     log(`mainnet NEAR is $${(await readNearUsd()).toFixed(4)} - every peg is read against it`);
@@ -181,9 +213,8 @@ async function main(): Promise<void> {
   // Each actor keeps its own next-due time, so a slow RPC call delays one bot
   // rather than shifting the whole schedule.
   let makerDue = Date.now();
+  let reportDue = Date.now() + 5 * 60_000;
   const botDue = new Map(BOTS.map((b) => [b.accountId, Date.now() + Math.random() * b.everyMs]));
-  const TICK_MS = 20_000;
-
   for (;;) {
     await tick();
 
@@ -197,6 +228,11 @@ async function main(): Promise<void> {
     if (due.length) {
       await tradersPass(due);
       for (const b of due) botDue.set(b.accountId, Date.now() + b.everyMs);
+    }
+
+    if (Date.now() >= reportDue) {
+      for (const line of rpcReport()) log(line);
+      reportDue = Date.now() + 5 * 60_000;
     }
 
     await new Promise((r) => setTimeout(r, TICK_MS));

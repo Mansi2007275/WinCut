@@ -10,7 +10,10 @@
 
 import { Account, KeyPairSigner } from "near-api-js";
 
-import { MAINNET_RPC_URL, RPC_URL, SWAP_GAS, TRADE_GAS } from "./config.js";
+import {
+  MAINNET_RPC_URLS, RPC_URL, RPC_URLS, SWAP_GAS, TRADE_GAS, VIEW_CACHE_MS,
+} from "./config.js";
+import { RpcPool, type ViewOptions } from "./rpc.js";
 
 type SecretKey = `ed25519:${string}` | `secp256k1:${string}`;
 
@@ -24,37 +27,44 @@ export class ChainError extends Error {
   }
 }
 
-async function rpcView<T>(rpc: string, accountId: string, method: string, args: unknown): Promise<T> {
-  const res = await fetch(rpc, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id: 1,
-      method: "query",
-      params: {
-        request_type: "call_function",
-        finality: "final",
-        account_id: accountId,
-        method_name: method,
-        args_base64: Buffer.from(JSON.stringify(args)).toString("base64"),
-      },
-    }),
-  });
-  const json = (await res.json()) as { error?: unknown; result?: { result?: number[]; error?: string } };
-  if (json.error) throw new ChainError(`rpc: ${JSON.stringify(json.error).slice(0, 180)}`);
-  if (json.result?.error) throw new ChainError(`${accountId}.${method}: ${json.result.error}`);
-  if (!json.result?.result) throw new ChainError(`${accountId}.${method}: empty result`);
-  return JSON.parse(Buffer.from(json.result.result).toString()) as T;
-}
+const stamp = () => new Date().toISOString().slice(11, 19);
+const warn = (s: string) => console.log(`[${stamp()}] ${s}`);
 
-export const view = <T>(accountId: string, method: string, args: unknown = {}) =>
-  rpcView<T>(RPC_URL, accountId, method, args);
+/**
+ * One pool for testnet and one for mainnet, shared by everything in the
+ * process - which is the point. The maker and the sampling tick both want the
+ * same pool reserves, and now the second one to ask gets the first one's
+ * answer.
+ */
+export const testnet = new RpcPool("testnet", RPC_URLS, warn);
+export const mainnet = new RpcPool("mainnet", MAINNET_RPC_URLS, warn);
 
-export const viewMainnet = <T>(accountId: string, method: string, args: unknown = {}) =>
-  rpcView<T>(MAINNET_RPC_URL, accountId, method, args);
+export const view = <T>(
+  accountId: string,
+  method: string,
+  args: unknown = {},
+  opts: ViewOptions = {},
+) => testnet.view<T>(accountId, method, args, opts);
 
-export const getPool = (ref: string, poolId: number) => view<RheaPool>(ref, "get_pool", { pool_id: poolId });
+export const viewMainnet = <T>(
+  accountId: string,
+  method: string,
+  args: unknown = {},
+  opts: ViewOptions = {},
+) => mainnet.view<T>(accountId, method, args, opts);
+
+/** The cached variants, for reads whose answer only changes when someone trades. */
+export const viewCached = <T>(accountId: string, method: string, args: unknown = {}) =>
+  view<T>(accountId, method, args, { cacheMs: VIEW_CACHE_MS });
+
+export const viewMainnetCached = <T>(accountId: string, method: string, args: unknown = {}) =>
+  viewMainnet<T>(accountId, method, args, { cacheMs: VIEW_CACHE_MS });
+
+export const rpcReport = (): string[] => [testnet.describe(), mainnet.describe()];
+
+/** Reserves. Cached, and `fresh` when a caller needs the post-trade state. */
+export const getPool = (ref: string, poolId: number, fresh = false) =>
+  view<RheaPool>(ref, "get_pool", { pool_id: poolId }, { cacheMs: VIEW_CACHE_MS, fresh });
 
 export const getReturn = (ref: string, poolId: number, tokenIn: string, tokenOut: string, amountIn: bigint) =>
   view<string>(ref, "get_return", {
@@ -81,6 +91,14 @@ export const ftBalanceOf = (token: string, accountId: string) =>
 
 const signers = new Map<string, Account>();
 
+/**
+ * Signing deliberately does not fail over.
+ *
+ * Views are idempotent, so trying a second endpoint costs nothing. A signed
+ * transaction is not: an endpoint that times out may still have broadcast it,
+ * and resending the same trade elsewhere risks buying twice. One endpoint, and
+ * a failed send stays failed and gets logged.
+ */
 export function signerFor(accountId: string, privateKey: string | undefined): Account {
   const cached = signers.get(accountId);
   if (cached) return cached;

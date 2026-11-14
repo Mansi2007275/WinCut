@@ -20,15 +20,23 @@
  * the pool somewhere nobody asked it to go.
  */
 
-import { getPool, viewMainnet } from "./chain.js";
+import { getPool, viewMainnetCached } from "./chain.js";
 import {
   LIVE_MARKETS, MARKETS, PEG, REF_CONTRACT, USDC_DECIMALS, USDC_ID, type MarketConfig,
 } from "./config.js";
 
 type RawPool = { token_account_ids: string[]; amounts: string[]; total_fee: number };
 
+/**
+ * Cached, which is where the duplicate mainnet reads went.
+ *
+ * Every peg is denominated in the NEAR price, so a maker pass over four markets
+ * asked for the same mainnet pool four times to get the same answer. The cache
+ * now lives in the RPC pool and is shared with everything else in the process,
+ * so the hand-rolled one that used to sit here is gone.
+ */
 const mainnetPool = (poolId: number): Promise<RawPool> =>
-  viewMainnet<RawPool>(PEG.mainnetRef, "get_pool", { pool_id: poolId });
+  viewMainnetCached<RawPool>(PEG.mainnetRef, "get_pool", { pool_id: poolId });
 
 /** Human-scale reserves of one pool, keyed by the two token accounts. */
 function reserves(pool: RawPool, a: string, aDec: number, b: string, bDec: number) {
@@ -43,28 +51,12 @@ function reserves(pool: RawPool, a: string, aDec: number, b: string, bDec: numbe
   return { rA, rB };
 }
 
-/**
- * USD per NEAR, cached for a few seconds.
- *
- * Every peg is denominated in it, so a maker pass over four markets asked for
- * it four times and read the same mainnet pool four times to get the same
- * answer. That is three wasted round trips per pass, and with four markets the
- * whole package's RPC traffic quadrupled at once - enough to start collecting
- * 429s from a free endpoint. The window is short on purpose: the point is to
- * collapse one pass's repeated reads, not to trade on a stale price.
- */
-let nearUsdCache: { at: number; price: number } | undefined;
-const NEAR_USD_TTL_MS = 10_000;
-
 /** USD per NEAR, from mainnet Rhea's deepest wNEAR/USDC pool. */
 export async function readNearUsd(): Promise<number> {
-  const hit = nearUsdCache;
-  if (hit && Date.now() - hit.at < NEAR_USD_TTL_MS) return hit.price;
   const pool = await mainnetPool(PEG.poolId);
   const { rA, rB } = reserves(pool, PEG.usdc, PEG.usdcDecimals, PEG.wnear, PEG.wnearDecimals);
   const price = rA / rB;
   if (!(price > 0) || !Number.isFinite(price)) throw new Error("the NEAR peg came back unusable");
-  nearUsdCache = { at: Date.now(), price };
   return price;
 }
 
@@ -101,11 +93,11 @@ export type PoolState = {
   feePct: number;
 };
 
-export async function readPoolFor(market: MarketConfig): Promise<PoolState> {
+export async function readPoolFor(market: MarketConfig, fresh = false): Promise<PoolState> {
   if (!market.poolId) {
     throw new Error(`${market.symbol} has no pool yet - create it first, see bots/README.md`);
   }
-  const pool = await getPool(REF_CONTRACT, market.poolId);
+  const pool = await getPool(REF_CONTRACT, market.poolId, fresh);
   const iU = pool.token_account_ids.indexOf(USDC_ID);
   const iT = pool.token_account_ids.indexOf(market.tokenId);
   if (iU < 0 || iT < 0) {

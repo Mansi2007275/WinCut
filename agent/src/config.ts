@@ -26,9 +26,52 @@ const optional = (k: string): string | undefined => {
 
 export const NETWORK = (optional("NEAR_NETWORK") ?? "testnet") as Network;
 
-export const RPC_URL =
-  optional("NEAR_RPC_URL") ??
-  (NETWORK === "mainnet" ? "https://free.rpc.fastnear.com" : "https://test.rpc.fastnear.com");
+/**
+ * The endpoints, in the order they are tried.
+ *
+ * Three that were verified to answer a real testnet view call: dRPC and
+ * FastNEAR both respond in about 350ms, rpc.testnet.near.org in about 3s.
+ * `neart.lava.build` is absent because it is discontinued and answers 410.
+ *
+ * The agent leads with dRPC while the bots lead with FastNEAR. Both fall back
+ * to the other two, so neither process depends on one provider - but on a
+ * normal pass they are drawing on different free tiers instead of queuing in
+ * the same bucket, which is what started returning 429 once four markets
+ * quadrupled the read traffic.
+ */
+const DEFAULT_RPCS =
+  NETWORK === "mainnet"
+    ? ["https://free.rpc.fastnear.com", "https://near.drpc.org"]
+    : [
+        "https://near-testnet.drpc.org",
+        "https://test.rpc.fastnear.com",
+        "https://rpc.testnet.near.org",
+      ];
+
+export const RPC_URLS: string[] = (() => {
+  const raw = optional("NEAR_RPC_URLS");
+  if (raw) {
+    const parsed = raw.split(",").map((x) => x.trim()).filter(Boolean);
+    if (parsed.length) return parsed;
+  }
+  const single = optional("NEAR_RPC_URL");
+  return single ? [single, ...DEFAULT_RPCS.filter((u) => u !== single)] : DEFAULT_RPCS;
+})();
+
+/** Kept for the signer, which uses exactly one endpoint on purpose. */
+export const RPC_URL = RPC_URLS[0]!;
+
+/**
+ * How long a view may be answered from cache.
+ *
+ * The agent reads every market's reserves once per pass and its own balance and
+ * positions alongside, and a pass is five minutes - so this mostly collapses
+ * the reads that happen within a single pass, where a route's pools are walked
+ * for a mid price and then again for a quote. Quotes for a `min_out` are never
+ * cached: that number is the only protection a trade has against the price
+ * having moved.
+ */
+export const VIEW_CACHE_MS = Number(optional("VIEW_CACHE_MS") ?? 12_000);
 
 /** The WinCut contract the agent trades through. */
 export const CONTRACT_ID = env(
@@ -219,7 +262,7 @@ export function describeConfig(): string {
     `network   ${NETWORK}`,
     `contract  ${CONTRACT_ID}`,
     `agent     ${AGENT_ACCOUNT_ID}`,
-    `rpc       ${RPC_URL}`,
+    `rpc       ${RPC_URLS.map((u) => { try { return new URL(u).hostname; } catch { return u; } }).join(" -> ")}`,
     `brain     ${LLM_API_KEY ? `${LLM_MODEL} via ${LLM_BASE_URL}` : "deterministic fallback (no NEAR_AI_API_KEY)"}`,
     `storage   ${UPSTASH_URL ? "upstash" : "in-memory only (no UPSTASH_REDIS_REST_URL)"}`,
     `mode      ${DRY_RUN ? "DRY RUN - decides and logs, never signs" : "live"}`,

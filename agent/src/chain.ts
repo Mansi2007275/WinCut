@@ -9,8 +9,11 @@
 
 import { Account, KeyPairSigner } from "near-api-js";
 
+import { RpcPool, type ViewOptions } from "./rpc.js";
+
 import {
-  AGENT_ACCOUNT_ID, AGENT_PRIVATE_KEY, CONTRACT_ID, NETWORK, RPC_URL, TRADE_GAS,
+  AGENT_ACCOUNT_ID, AGENT_PRIVATE_KEY, CONTRACT_ID, NETWORK, RPC_URL, RPC_URLS,
+  TRADE_GAS, VIEW_CACHE_MS,
 } from "./config.js";
 
 export type Hop = { pool_id: number; token_in: string; token_out: string };
@@ -46,32 +49,24 @@ export class ChainError extends Error {
   }
 }
 
-export async function view<T>(accountId: string, method: string, args: unknown = {}): Promise<T> {
-  const res = await fetch(RPC_URL, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id: 1,
-      method: "query",
-      params: {
-        request_type: "call_function",
-        finality: "final",
-        account_id: accountId,
-        method_name: method,
-        args_base64: Buffer.from(JSON.stringify(args)).toString("base64"),
-      },
-    }),
-  });
-  const json = (await res.json()) as {
-    error?: unknown;
-    result?: { result?: number[]; error?: string };
-  };
-  if (json.error) throw new ChainError(`rpc: ${JSON.stringify(json.error).slice(0, 200)}`);
-  if (json.result?.error) throw new ChainError(`${accountId}.${method}: ${json.result.error}`);
-  if (!json.result?.result) throw new ChainError(`${accountId}.${method}: empty result`);
-  return JSON.parse(Buffer.from(json.result.result).toString()) as T;
-}
+const stamp = () => new Date().toISOString().slice(11, 19);
+const warn = (s: string) => console.log(`[${stamp()}] ${s}`);
+
+/** One pool, shared by every read the agent makes. */
+export const rpc = new RpcPool("agent", RPC_URLS, warn);
+
+export const view = <T>(
+  accountId: string,
+  method: string,
+  args: unknown = {},
+  opts: ViewOptions = {},
+): Promise<T> => rpc.view<T>(accountId, method, args, opts);
+
+/** For reads whose answer only changes when somebody trades. */
+export const viewCached = <T>(accountId: string, method: string, args: unknown = {}) =>
+  view<T>(accountId, method, args, { cacheMs: VIEW_CACHE_MS });
+
+export const rpcReport = (): string[] => [rpc.describe()];
 
 export const getTokens = () => view<TokenConfig[]>(CONTRACT_ID, "get_tokens");
 
@@ -92,8 +87,17 @@ export const getTradesOf = (accountId = AGENT_ACCOUNT_ID, limit = 100) =>
 
 export type RheaPool = { token_account_ids: string[]; amounts: string[]; total_fee: number };
 
+/**
+ * Pool reserves, cached.
+ *
+ * A pass walks every market's route for a mid price and then walks the winning
+ * route again to quote the trade, so the same pools are read twice within a
+ * second or two. The quote itself is never cached - `getReturn` goes through
+ * the uncached `view` - but the reserves behind a mid price are the same number
+ * either time.
+ */
 export const getPool = (refContract: string, poolId: number) =>
-  view<RheaPool>(refContract, "get_pool", { pool_id: poolId });
+  viewCached<RheaPool>(refContract, "get_pool", { pool_id: poolId });
 
 // ------------------------------------------------------------------ signing
 

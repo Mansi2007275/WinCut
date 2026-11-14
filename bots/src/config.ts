@@ -41,10 +41,56 @@ const optional = (k: string): string | undefined => {
 
 export const NETWORK = (optional("NEAR_NETWORK") ?? "testnet") as Network;
 
-export const RPC_URL = optional("NEAR_RPC_URL") ?? "https://test.rpc.fastnear.com";
+/**
+ * The testnet endpoints, in the order they are tried.
+ *
+ * Three that were verified to answer a real view call: FastNEAR and dRPC both
+ * respond in about 350ms, and rpc.testnet.near.org takes around 3s but works.
+ * `neart.lava.build` is not here because it is gone - it answers every request
+ * with 410 "This endpoint has been discontinued".
+ *
+ * The bots lead with FastNEAR and the agent leads with dRPC, set through
+ * NEAR_RPC_URLS in each package's .env. Two processes on free tiers should not
+ * be queuing behind each other in one provider's bucket when there is a second
+ * provider sitting idle.
+ */
+const DEFAULT_RPCS = [
+  "https://test.rpc.fastnear.com",
+  "https://near-testnet.drpc.org",
+  "https://rpc.testnet.near.org",
+];
 
-/** Mainnet, read-only, purely to learn what NEAR is actually worth. */
-export const MAINNET_RPC_URL = optional("NEAR_MAINNET_RPC_URL") ?? "https://free.rpc.fastnear.com";
+const list = (k: string, fallback: string[]): string[] => {
+  const raw = optional(k);
+  if (!raw) return fallback;
+  const parsed = raw.split(",").map((x) => x.trim()).filter(Boolean);
+  return parsed.length ? parsed : fallback;
+};
+
+export const RPC_URLS = list("NEAR_RPC_URLS", [
+  optional("NEAR_RPC_URL") ?? DEFAULT_RPCS[0]!,
+  ...DEFAULT_RPCS.slice(1),
+]);
+
+/** Kept for anything that still wants a single string. */
+export const RPC_URL = RPC_URLS[0]!;
+
+/** Mainnet, read-only, purely to learn what the real tokens are worth. */
+export const MAINNET_RPC_URLS = list("NEAR_MAINNET_RPC_URLS", [
+  optional("NEAR_MAINNET_RPC_URL") ?? "https://free.rpc.fastnear.com",
+  "https://near.drpc.org",
+]);
+
+export const MAINNET_RPC_URL = MAINNET_RPC_URLS[0]!;
+
+/**
+ * How long a view may be answered from cache.
+ *
+ * Pool reserves and pegs move when somebody trades, and nothing here trades
+ * faster than this window. Quotes used for a `min_out` are never cached: that
+ * number is the only protection a trade has against the price having moved.
+ */
+export const VIEW_CACHE_MS = Number(optional("VIEW_CACHE_MS") ?? 12_000);
 
 export const CONTRACT_ID = env("WINCUT_CONTRACT_ID", "wincut-mansi.testnet");
 export const REF_CONTRACT = env("REF_CONTRACT", "ref-finance-101.testnet");
@@ -249,6 +295,16 @@ export const BOTS: BotConfig[] = [
 export const MM_ACCOUNT_ID = optional("MM_ACCOUNT_ID") ?? "mm.wincut-mansi.testnet";
 export const MM_PRIVATE_KEY = optional("MM_PRIVATE_KEY");
 export const MM_EVERY_MS = Number(optional("MM_EVERY_MS") ?? 60_000);
+
+/**
+ * How often the sampling loop reads every pool.
+ *
+ * It was 20s, from when there was one pool. With four that is twelve reads a
+ * minute for a price series whose candles are five minutes wide, which is far
+ * more resolution than anything downstream uses. 35s keeps the chart smooth and
+ * cuts a third of the traffic.
+ */
+export const TICK_MS = Number(optional("TICK_MS") ?? 35_000);
 
 // ------------------------------------------------------------------- limits
 

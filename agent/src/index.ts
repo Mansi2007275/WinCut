@@ -16,11 +16,11 @@
 import {
   AGENT_ACCOUNT_ID, AGENT_MARKETS, CONTRACT_ID, DRY_RUN, LOOP_MS, NETWORK,
   PRIMARY_MARKET_TOKEN_ID, REF_CONTRACT, RISK, RUN_ONCE, SLIPPAGE_BPS, TIMEFRAME,
-  USDC_DECIMALS, describeConfig, fmtPrice,
+  USDC_DECIMALS, VIEW_CACHE_MS, describeConfig, fmtPrice,
 } from "./config.js";
 import {
   callBuy, callSell, explorerTx, getBalance, getPositions, getTokens, getTradesOf,
-  quoteRoute, reverseHops, type TokenConfig,
+  quoteRoute, reverseHops, rpcReport, type TokenConfig,
 } from "./chain.js";
 import { readMarket, type MarketView } from "./market.js";
 import { decide } from "./brain.js";
@@ -249,6 +249,27 @@ async function pass(): Promise<void> {
   await record(entry);
 }
 
+/**
+ * What a pass costs the network, per minute.
+ *
+ * Printed because the figure was invisible until an endpoint began refusing
+ * calls, and because it is what changes when a market is listed. Counted before
+ * the cache, with the cache stated separately, so neither number flatters the
+ * other.
+ */
+function estimateLoad(markets: number): string {
+  const passesPerMin = 60_000 / LOOP_MS;
+  // Per pass: tokens, balance, positions, own trades, then one get_pool per
+  // market route hop, plus a quote if it trades.
+  const perPass = 4 + markets + 1;
+  const total = passesPerMin * perPass;
+  return (
+    `expecting about ${total.toFixed(1)} rpc call(s)/min before caching ` +
+    `(${perPass} per pass over ${markets} market(s), one pass every ${LOOP_MS / 1000}s) · ` +
+    `a ${VIEW_CACHE_MS / 1000}s cache collapses the repeats inside a pass`
+  );
+}
+
 async function main(): Promise<void> {
   log(`WinCut agent starting on ${NETWORK}`);
   console.log(describeConfig());
@@ -258,13 +279,24 @@ async function main(): Promise<void> {
   if (DRY_RUN) {
     log("DRY RUN - every decision is real, taken from live chain data; none of them is signed");
   }
+  log(estimateLoad(AGENT_MARKETS.length || 4));
+
+  let reportDue = Date.now() + 15 * 60_000;
 
   for (;;) {
     try {
       await pass();
     } catch (e) {
-      // A failed pass is a skipped pass, never a crashed agent.
+      // A failed pass is a skipped pass, never a crashed agent - but it is
+      // still a pass that did not happen, so it is said out loud and the RPC
+      // counters come with it, since an exhausted endpoint is the likeliest
+      // reason a pass failed at all.
       log(`pass failed: ${(e as Error).message}`);
+      for (const line of rpcReport()) log(line);
+    }
+    if (Date.now() >= reportDue) {
+      for (const line of rpcReport()) log(line);
+      reportDue = Date.now() + 15 * 60_000;
     }
     if (RUN_ONCE) break;
     await new Promise((r) => setTimeout(r, LOOP_MS));
