@@ -22,8 +22,8 @@ import type { Account } from "near-api-js";
 
 import { getBalance, getPositions, getReturn, signerFor, wincutBuy, wincutSell, explorerTx } from "./chain.js";
 import {
-  BOT_RISK, CONTRACT_ID, DRY_RUN, MIRROR_DECIMALS, MIRROR_POOL_ID, MIRROR_SYMBOL, MIRROR_TOKEN_ID,
-  REF_CONTRACT, SLIPPAGE_BPS, USDC_DECIMALS, USDC_ID, type BotConfig,
+  BOT_RISK, CONTRACT_ID, DRY_RUN, REF_CONTRACT, SLIPPAGE_BPS, USDC_DECIMALS, USDC_ID,
+  type BotConfig, type MarketConfig,
 } from "./config.js";
 
 const toRaw = (human: number, decimals: number): bigint => {
@@ -100,15 +100,33 @@ export type BotDecision = {
   liquidity?: boolean;
 };
 
+/**
+ * What belongs to the bot, and what belongs to the bot in one market.
+ *
+ * The daily cap and the silence floor are properties of the bot: a bot that has
+ * traded forty times today has traded forty times today, whichever market it
+ * did it in, and a bot that just traded MLONK is not a quiet bot. The grid's
+ * clock and its alternation are properties of a bot *in a market* - the grid
+ * selling half its MNEAR rung tells you nothing about where it is in its
+ * MDRAGON cycle.
+ *
+ * Getting that split wrong is not cosmetic. Sharing one clock across four
+ * markets would have the grid trade once and then sit out the other three.
+ */
 type BotState = {
-  /** The last trade of any kind, which is also the grid bot's clock. */
-  lastTradeAt?: number;
-  /** Which way that trade went, so the grid can alternate. */
-  lastSide?: "BUY" | "SELL";
-  /** When this bot is next allowed to trade purely to keep the market moving. */
+  /** When this bot is next allowed to trade purely to keep a market moving. */
   nextLiquidityAt?: number;
+  /** Last trade in any market, for reporting how long the quiet ran. */
+  lastTradeAt?: number;
   tradesToday: number;
   dayStartedAt: number;
+};
+
+type MarketState = {
+  /** This bot's last trade in this market, which is the grid's clock. */
+  lastTradeAt?: number;
+  /** Which way it went, so the grid can alternate. */
+  lastSide?: "BUY" | "SELL";
 };
 
 /**
@@ -132,6 +150,7 @@ const nextLiquidityWindow = (): number =>
 const round2 = (n: number): number => Math.floor(n * 100) / 100;
 
 const states = new Map<string, BotState>();
+const marketStates = new Map<string, MarketState>();
 
 const stateFor = (accountId: string): BotState => {
   let s = states.get(accountId);
@@ -140,6 +159,16 @@ const stateFor = (accountId: string): BotState => {
     states.set(accountId, s);
   }
   return s;
+};
+
+const marketStateFor = (accountId: string, poolId: number): MarketState => {
+  const k = `${accountId}|${poolId}`;
+  let m = marketStates.get(k);
+  if (!m) {
+    m = {};
+    marketStates.set(k, m);
+  }
+  return m;
 };
 
 /**
@@ -220,7 +249,7 @@ function reversion(history: PriceHistory, holdingPnlPct: number | undefined, siz
 function grid(
   holdingPnlPct: number | undefined,
   size: number,
-  state: BotState,
+  state: MarketState,
   positionTokens: number,
 ): BotDecision {
   const TAKE_PROFIT_PCT = 3;
@@ -308,16 +337,19 @@ function liquidityTrade(
  * as well as a timed one - the floor is about the market being quiet, not about
  * where the trade came from.
  */
-function noteTrade(state: BotState, side: "BUY" | "SELL"): void {
-  state.lastTradeAt = Date.now();
-  state.lastSide = side;
+function noteTrade(state: BotState, market: MarketState, side: "BUY" | "SELL"): void {
+  const now = Date.now();
+  state.lastTradeAt = now;
   state.nextLiquidityAt = nextLiquidityWindow();
+  market.lastTradeAt = now;
+  market.lastSide = side;
 }
 
 // ------------------------------------------------------------------ execution
 
 export type BotPass = {
   bot: BotConfig;
+  market: MarketConfig;
   decision: BotDecision;
   balanceUsdc: number;
   positionTokens: number;
@@ -329,8 +361,14 @@ export type BotPass = {
   liquidity?: boolean;
 };
 
-export async function runBot(bot: BotConfig, history: PriceHistory, log: (s: string) => void): Promise<BotPass> {
+export async function runBot(
+  bot: BotConfig,
+  market: MarketConfig,
+  history: PriceHistory,
+  log: (s: string) => void,
+): Promise<BotPass> {
   const state = stateFor(bot.accountId);
+  const mstate = marketStateFor(bot.accountId, market.poolId);
 
   const [rawBalance, positions] = await Promise.all([
     getBalance(CONTRACT_ID, bot.accountId),
@@ -338,7 +376,7 @@ export async function runBot(bot: BotConfig, history: PriceHistory, log: (s: str
   ]);
   const balanceUsdc = toUnits(rawBalance, USDC_DECIMALS);
 
-  const held = positions.find((p) => p.token_id === MIRROR_TOKEN_ID && BigInt(p.amount) > 0n);
+  const held = positions.find((p) => p.token_id === market.tokenId && BigInt(p.amount) > 0n);
   const positionTokens = held ? toUnits(held.amount, held.decimals) : 0;
   const basis = held ? toUnits(held.cost_basis_usdc, USDC_DECIMALS) : 0;
   const price = history.last();
@@ -350,19 +388,21 @@ export async function runBot(bot: BotConfig, history: PriceHistory, log: (s: str
       ? momentum(history, pnlPct, bot.sizeUsdc)
       : bot.kind === "reversion"
         ? reversion(history, pnlPct, bot.sizeUsdc)
-        : grid(pnlPct, bot.sizeUsdc, state, positionTokens);
+        : grid(pnlPct, bot.sizeUsdc, mstate, positionTokens);
 
   // The strategy had nothing to say. If it has had nothing to say for long
   // enough, trade anyway - and say that that is why.
   if (decision.action === "HOLD") {
     const timed = liquidityTrade(bot, state, balanceUsdc, positionTokens);
     if (timed) {
-      log(`  ${bot.accountId.split(".")[0]}: strategy held - ${decision.reason}`);
+      log(`  ${bot.accountId.split(".")[0]} ${market.symbol}: strategy held - ${decision.reason}`);
       decision = timed;
     }
   }
 
-  const pass: BotPass = { bot, decision, balanceUsdc, positionTokens, pnlPct, liquidity: decision.liquidity };
+  const pass: BotPass = {
+    bot, market, decision, balanceUsdc, positionTokens, pnlPct, liquidity: decision.liquidity,
+  };
 
   // ---- the limits, after the strategy has spoken ----
   if (decision.action !== "HOLD") {
@@ -387,16 +427,16 @@ export async function runBot(bot: BotConfig, history: PriceHistory, log: (s: str
         );
       }
     } else if (decision.action === "SELL" && !held) {
-      pass.vetoed = `nothing held in ${MIRROR_SYMBOL} to sell`;
+      pass.vetoed = `nothing held in ${market.symbol} to sell`;
     }
   }
 
   if (decision.action === "HOLD") {
-    log(`  ${bot.accountId.split(".")[0]}: HOLD - ${decision.reason}`);
+    log(`  ${bot.accountId.split(".")[0]} ${market.symbol}: HOLD - ${decision.reason}`);
     return pass;
   }
   if (pass.vetoed) {
-    log(`  ${bot.accountId.split(".")[0]}: refused a ${decision.action} - ${pass.vetoed}`);
+    log(`  ${bot.accountId.split(".")[0]} ${market.symbol}: refused a ${decision.action} - ${pass.vetoed}`);
     return pass;
   }
   if (DRY_RUN) {
@@ -421,18 +461,18 @@ export async function runBot(bot: BotConfig, history: PriceHistory, log: (s: str
     if (decision.action === "BUY") {
       const usdcIn = toRaw(decision.sizeUsdc!, USDC_DECIMALS);
       const expected = BigInt(
-        await getReturn(REF_CONTRACT, MIRROR_POOL_ID, USDC_ID, MIRROR_TOKEN_ID, usdcIn),
+        await getReturn(REF_CONTRACT, market.poolId, USDC_ID, market.tokenId, usdcIn),
       );
       const hash = await wincutBuy(account, CONTRACT_ID, {
-        token_id: MIRROR_TOKEN_ID,
+        token_id: market.tokenId,
         usdc_in: usdcIn.toString(),
         min_out: applySlippage(expected).toString(),
       });
       pass.txHash = hash;
       state.tradesToday++;
-      noteTrade(state, "BUY");
+      noteTrade(state, mstate, "BUY");
       log(
-        `  ${bot.accountId.split(".")[0]}: BUY ${decision.sizeUsdc!.toFixed(2)}` +
+        `  ${bot.accountId.split(".")[0]}: BUY ${decision.sizeUsdc!.toFixed(2)} ${market.symbol}` +
         `${decision.liquidity ? " [liquidity]" : ""} - ${decision.reason}`,
       );
       log(`     ${explorerTx(hash)}`);
@@ -444,19 +484,20 @@ export async function runBot(bot: BotConfig, history: PriceHistory, log: (s: str
         return pass;
       }
       const expected = BigInt(
-        await getReturn(REF_CONTRACT, MIRROR_POOL_ID, MIRROR_TOKEN_ID, USDC_ID, amount),
+        await getReturn(REF_CONTRACT, market.poolId, market.tokenId, USDC_ID, amount),
       );
       const hash = await wincutSell(account, CONTRACT_ID, {
-        token_id: MIRROR_TOKEN_ID,
+        token_id: market.tokenId,
         amount: amount.toString(),
         min_out_usdc: applySlippage(expected).toString(),
       });
       pass.txHash = hash;
       state.tradesToday++;
-      noteTrade(state, "SELL");
+      noteTrade(state, mstate, "SELL");
       log(
-        `  ${bot.accountId.split(".")[0]}: SELL ${toUnits(amount, MIRROR_DECIMALS).toFixed(6)} ` +
-        `${MIRROR_SYMBOL}${decision.liquidity ? " [liquidity]" : ""} - ${decision.reason}`,
+        `  ${bot.accountId.split(".")[0]}: SELL ` +
+        `${toUnits(amount, market.decimals).toLocaleString("en-US", { maximumFractionDigits: 6 })} ` +
+        `${market.symbol}${decision.liquidity ? " [liquidity]" : ""} - ${decision.reason}`,
       );
       log(`     ${explorerTx(hash)}`);
     }

@@ -51,13 +51,113 @@ export const REF_CONTRACT = env("REF_CONTRACT", "ref-finance-101.testnet");
 export const USDC_ID = env("USDC_ID", "thusdc.testnet");
 export const USDC_DECIMALS = 6;
 
-/** The token the bots trade. Minted by us, so its ratio is ours to choose. */
+/** The first market, kept as its own export because the whole package started
+ * with one and plenty of tooling still names it directly. */
 export const MIRROR_TOKEN_ID = env("MIRROR_TOKEN_ID", "mnear.tkn.primitives.testnet");
 export const MIRROR_SYMBOL = env("MIRROR_SYMBOL", "MNEAR");
 export const MIRROR_DECIMALS = Number(optional("MIRROR_DECIMALS") ?? 24);
 
 /** The pool the market maker keeps pegged. Set after `add_simple_pool`. */
 export const MIRROR_POOL_ID = Number(env("MIRROR_POOL_ID", "0"));
+
+// ------------------------------------------------------------- the markets
+
+/**
+ * Where a mirror token's real price comes from.
+ *
+ * Almost every memecoin on mainnet Rhea is quoted against wNEAR rather than
+ * against a dollar stablecoin, so its dollar price is two reads: how many of it
+ * one NEAR buys, and what a NEAR is worth. `viaWnear` says which shape a market
+ * is, and nothing else in the code has to care.
+ *
+ * Read from reserves rather than `get_return`, so the number is a mid price
+ * with no trade impact folded into it. Asking what one NEAR would fetch tells
+ * you the price *after* your own trade, which is not the price we want to peg
+ * to.
+ */
+export type PegSpec = {
+  /** The mainnet Rhea pool holding the real token. */
+  poolId: number;
+  /** The real token's mainnet account, or wrap.near for the NEAR market. */
+  token: string;
+  decimals: number;
+  /** True when the pool quotes the token against wNEAR, not against USDC. */
+  viaWnear: boolean;
+};
+
+export type MarketConfig = {
+  /** Our symbol, e.g. MDRAGON. */
+  symbol: string;
+  tokenId: string;
+  decimals: number;
+  /** Our testnet Rhea pool against thusdc. 0 until `add_simple_pool` has run. */
+  poolId: number;
+  /** The real thing this mirrors, for the log and the disclosure. */
+  mirrors: string;
+  peg: PegSpec;
+};
+
+/**
+ * The four mirror markets.
+ *
+ * Hard-coded rather than read from a packed environment variable, because the
+ * mainnet pool ids and decimals are facts about mainnet, not configuration: a
+ * typo in a packed string would silently peg a market to the wrong token, and
+ * there is no sensible way to validate it at startup. The one genuinely local
+ * value is our own testnet pool id, which does not exist until the pool has
+ * been created, so that is the one thing taken from the environment.
+ *
+ * All three memecoin mirrors use 6 decimals, where the real tokens use 24, 18
+ * and 8. That is deliberate and does not change any price: a price is per whole
+ * token either way. What it changes is the size of the raw integers. BLACKDRAGON
+ * trades near $5.6e-9, so 400 tUSDC of depth is 7.1e10 tokens - which at 24
+ * decimals is 7.1e34 raw, and Rhea's swap numerator multiplies the input amount
+ * by that reserve, landing around 1e45. That is far past u128. Rhea does the
+ * multiplication in u256 internally and would survive it, but seeding real
+ * balances into a pool on the strength of an assumption about somebody else's
+ * intermediate arithmetic is not a trade worth making. At 6 decimals every
+ * number involved stays small, and 1e-6 of a token is still $5.6e-15.
+ */
+export const MARKETS: MarketConfig[] = [
+  {
+    symbol: MIRROR_SYMBOL,
+    tokenId: MIRROR_TOKEN_ID,
+    decimals: MIRROR_DECIMALS,
+    poolId: MIRROR_POOL_ID,
+    mirrors: "NEAR",
+    peg: { poolId: 4512, token: "wrap.near", decimals: 24, viaWnear: false },
+  },
+  {
+    symbol: "MDRAGON",
+    tokenId: optional("MDRAGON_TOKEN_ID") ?? "mdragon.tkn.primitives.testnet",
+    decimals: 6,
+    poolId: Number(optional("MDRAGON_POOL_ID") ?? 0),
+    mirrors: "BLACKDRAGON",
+    peg: { poolId: 4276, token: "blackdragon.tkn.near", decimals: 24, viaWnear: true },
+  },
+  {
+    symbol: "MSHITZU",
+    tokenId: optional("MSHITZU_TOKEN_ID") ?? "mshitzu.tkn.primitives.testnet",
+    decimals: 6,
+    poolId: Number(optional("MSHITZU_POOL_ID") ?? 0),
+    mirrors: "SHITZU",
+    peg: { poolId: 4369, token: "token.0xshitzu.near", decimals: 18, viaWnear: true },
+  },
+  {
+    symbol: "MLONK",
+    tokenId: optional("MLONK_TOKEN_ID") ?? "mlonk.tkn.primitives.testnet",
+    decimals: 6,
+    poolId: Number(optional("MLONK_POOL_ID") ?? 0),
+    mirrors: "LONK",
+    peg: { poolId: 4314, token: "token.lonkingnearbackto2024.near", decimals: 8, viaWnear: true },
+  },
+];
+
+/** The markets that actually have a pool yet. Everything live iterates these. */
+export const LIVE_MARKETS = (): MarketConfig[] => MARKETS.filter((m) => m.poolId > 0);
+
+export const marketByPool = (poolId: number): MarketConfig | undefined =>
+  MARKETS.find((m) => m.poolId === poolId);
 
 // ------------------------------------------------------------------ the peg
 
@@ -180,7 +280,12 @@ export function describeConfig(): string {
     `network    ${NETWORK}`,
     `contract   ${CONTRACT_ID}`,
     `exchange   ${REF_CONTRACT}`,
-    `market     ${MIRROR_SYMBOL} (${MIRROR_TOKEN_ID}) pool #${MIRROR_POOL_ID || "NOT SET"}`,
+    ...MARKETS.map(
+      (m) =>
+        `market     ${m.symbol.padEnd(8)} ${m.tokenId.padEnd(34)} pool #${
+          m.poolId || "NOT SET"
+        }  mirrors ${m.mirrors}`,
+    ),
     `peg        ${PEG.mainnetRef} pool #${PEG.poolId}, band ±${PEG_BAND_PCT}%`,
     `maker      ${MM_ACCOUNT_ID}${MM_PRIVATE_KEY ? "" : "  (no key - will not act)"}`,
     ...BOTS.map(

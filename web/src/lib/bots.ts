@@ -23,8 +23,33 @@ export const BOT_ACCOUNTS: string[] = (process.env.NEXT_PUBLIC_BOT_ACCOUNTS ?? "
 /** The market maker. Not a trader, and not ranked as one. */
 export const MM_ACCOUNT = process.env.NEXT_PUBLIC_MM_ACCOUNT?.trim() || undefined;
 
-/** The token whose pool WinCut operates and pegs. */
-export const MIRROR_TOKEN_ID = process.env.NEXT_PUBLIC_MIRROR_TOKEN_ID?.trim() || undefined;
+/**
+ * The tokens whose pools WinCut operates and pegs.
+ *
+ * Plural now. It began as one mirror of NEAR and is four: a mirror each of
+ * NEAR, BLACKDRAGON, SHITZU and LONK, every one of them minted by us, pooled by
+ * us and steered at the real mainnet price of the thing it mirrors. The
+ * disclosure has to cover all four, because a viewer who learns that one market
+ * is operated and assumes the rest are not has been misled by our own notice.
+ */
+export const MIRROR_TOKEN_IDS: string[] = (
+  process.env.NEXT_PUBLIC_MIRROR_TOKENS ??
+  process.env.NEXT_PUBLIC_MIRROR_TOKEN_ID ??
+  ""
+)
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+
+/**
+ * The market the markets list leads with.
+ *
+ * MNEAR, because it is the deepest and the only one whose peg most visitors can
+ * sanity-check from memory - a chart of a token mirroring NEAR at $3.40 is
+ * legible in a way that one mirroring BLACKDRAGON at $0.0000000056 is not.
+ */
+export const PRIMARY_TOKEN_ID =
+  process.env.NEXT_PUBLIC_PRIMARY_TOKEN?.trim() || MIRROR_TOKEN_IDS[0] || undefined;
 
 const botSet = new Set(BOT_ACCOUNTS);
 
@@ -37,17 +62,19 @@ export const isMarketMaker = (accountId: string | undefined): boolean =>
 export const isOperated = (accountId: string | undefined): boolean =>
   isBot(accountId) || isMarketMaker(accountId);
 
+const mirrorSet = new Set(MIRROR_TOKEN_IDS);
+
 export const isMirrorMarket = (tokenId: string | undefined): boolean =>
-  Boolean(tokenId && MIRROR_TOKEN_ID && tokenId === MIRROR_TOKEN_ID);
+  Boolean(tokenId && mirrorSet.has(tokenId));
 
 export const BOT_NOTE =
   "This is one of WinCut's own trading bots, not a person. It runs a fixed strategy so that testnet has trades in it at all, and when that strategy has seen nothing to act on for a few minutes it makes a small randomised trade anyway, marked as a liquidity trade - otherwise the bots would agree that nothing was happening and the market would stop. Its results are real and read from the contract, but copying it is copying a script, and it is not tuned to be profitable.";
 
 export const MM_NOTE =
-  "This account is WinCut's market maker, not a trader. It does not trade through WinCut; it swaps on the exchange to keep the pool's price tracking real mainnet NEAR, which is what stops the bots walking the price somewhere meaningless.";
+  "This account is WinCut's market maker, not a trader. It does not trade through WinCut; it swaps on the exchange to keep each operated pool's price tracking the real mainnet price of the token that pool mirrors, which is what stops the bots walking a price somewhere meaningless.";
 
 export const MIRROR_MARKET_NOTE =
-  "WinCut operates this market. The token was minted by us, the pool is ours, and its price is steered toward the live mainnet NEAR price by our own market maker while three of our bots trade against each other inside it. Every candle is a real on-chain swap at a real executed price - but this is a market with a known operator, not independent price discovery.";
+  "WinCut operates this market. The token was minted by us, the pool is ours, and its price is steered toward the live mainnet price of the real token it mirrors by our own market maker, while three of our bots trade against each other inside it. Every candle is a real on-chain swap at a real executed price - but this is a market with a known operator, not independent price discovery.";
 
 export const MIRROR_MARKET_WHY =
   "It exists because testnet has no traders. A pool nobody touches gives a flat chart, and the alternative to running a real market was generating candles that only looked like one.";
