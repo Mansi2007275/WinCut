@@ -653,6 +653,8 @@ export type Activity = {
   sells: number;
   buyPct: number | null;
   count: number;
+  /** Trades in the last hour, for the live badge. 24h is too long for that. */
+  countLastHour: number;
   wincutCount: number;
   makerCount: number;
   makerVolume: number;

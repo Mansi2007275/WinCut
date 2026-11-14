@@ -97,6 +97,8 @@ export function PriceChart({
   const [hover, setHover] = useState<Hover>(null);
   /** Set once the user pans or zooms, so a poll never yanks the view back. */
   const userMoved = useRef(false);
+  /** True while this component is the one moving the view, not the viewer. */
+  const applying = useRef(false);
 
   // --- create the chart once -------------------------------------------------
   useEffect(() => {
@@ -120,7 +122,12 @@ export function PriceChart({
         borderColor: COLOR.border,
         timeVisible: true,
         secondsVisible: false,
-        rightOffset: 4,
+        rightOffset: 2,
+        // Stops the view being scrolled into blank space on either side of a
+        // short series, which a testnet market's first hour of candles always
+        // is.
+        fixLeftEdge: true,
+        fixRightEdge: true,
       },
       crosshair: {
         mode: 1,
@@ -172,7 +179,12 @@ export function PriceChart({
     });
 
     const timeScale = chart.timeScale();
+    // The range also changes when *we* change it - setData and fitContent both
+    // fire this. Without the guard the first data load marked the chart as
+    // user-moved, so it never auto-fitted again and a growing series drifted
+    // off to one side with empty space beside it.
     const onRangeChange = () => {
+      if (applying.current) return;
       userMoved.current = true;
     };
     timeScale.subscribeVisibleLogicalRangeChange(onRangeChange);
@@ -199,6 +211,7 @@ export function PriceChart({
     const volume = volumeRef.current;
     if (!series || !volume || !candles?.length) return;
 
+    applying.current = true;
     series.setData(
       candles.map((c) => ({
         time: c.time as UTCTimestamp,
@@ -226,6 +239,10 @@ export function PriceChart({
     });
 
     if (!userMoved.current) chartRef.current?.timeScale().fitContent();
+    // Released after the range events this effect caused have been delivered.
+    requestAnimationFrame(() => {
+      applying.current = false;
+    });
   }, [candles]);
 
   // --- the user's own position, drawn over the top --------------------------
