@@ -126,23 +126,33 @@ Read from chain while writing this, on 2026-11-14. Reproduce any row with the vi
 
 | | value | how |
 |---|---|---|
-| Settled trades | **223** (137 buys, 86 sells) | `get_config.total_trades` |
-| Notional through the ring | **2,763.85 tUSDC** | `get_recent_trades` |
-| Losing sells | **76** | `get_recent_trades` |
-| **Losing sells charged a fee** | **0** | every one has `fee: "0"` |
-| Profitable sells | **11** | `get_recent_trades` |
-| Fees charged, all time | **0.00 tUSDC** | every profit so far was smaller than that account's banked credit |
-| Loss credit banked | **87.13 tUSDC** | `get_loss_credit` |
-| Contract holds | **1,106.27 tUSDC** | `thusdc.testnet.ft_balance_of(wincut-mansi.testnet)` |
-| Contract owes | **1,106.27 tUSDC** | `get_usdc_accounted` |
+| Settled trades | **343** (227 buys, 116 sells) | `get_config.total_trades` |
+| Notional through the ring | **3,858.84 tUSDC** | `get_recent_trades` |
+| Losing sells | **97** | `get_recent_trades`, `pnl.negative` |
+| **Losing sells charged a fee** | **0** | every one of the 97 has `fee: "0"` |
+| Realised losses they cover | **108.48 tUSDC** | summed `pnl.abs` on those 97 |
+| Profitable sells | **19** | `get_recent_trades` |
+| **Profitable sells charged a fee** | **1** | the other 18 were covered by banked credit |
+| Fees charged, all time | **0.076611 tUSDC** | `fee` on trade `#274` |
+| Loss credit still banked | **93.68 tUSDC** | `get_loss_credit`, five accounts |
+| Contract holds | **984.52 tUSDC** | `thusdc.testnet.ft_balance_of(wincut-mansi.testnet)` |
+| Contract owes | **984.52 tUSDC** | `get_usdc_accounted` |
 | Surplus / shortfall | **0.00 / 0** | the two above, and `get_config.shortfall_usdc` |
 
-Loss credit per account: `agent` 38.09, `revert` 21.16, `grid` 16.52, `momo` 11.36.
+Loss credit per account: `agent` 48.31, `revert` 21.90, `momo` 12.28, `grid` 11.18,
+`trader` 0.0021.
 
-The zero-fee row is the thesis running live: 76 losses cost nothing and banked 87 tUSDC of
-credit, and all 11 wins since were smaller than that credit, so the platform has earned
-**nothing** here — exactly what the rule says should happen to a market that is down. The
-claimable ledger reads `"0"` for every account, the protocol included.
+The single charged fee is the rule working, not an exception to it. Trade `#274`:
+`trader.wincut-mansi.testnet` sold MNEAR for a profit of 0.766117 tUSDC with no banked
+credit left to spend, so the contract took a tenth of the whole profit — 0.076611 tUSDC,
+exact to six decimals. One profitable exit in 19 reached that point; the other 18 were
+smaller than their account's credit, and all 97 losing exits were free. A venue taking 1% in
+and 1% out would have taken **13.71 tUSDC** from those losses alone.
+
+That fee's three shares went to one place. `#274` has `followed: null` — nobody was copied,
+so there is no trader to pay 50% to and no referrer to pay 20% to, and the whole amount sits
+in `get_claimable("wincut-mansi.testnet")`. Every other account's claimable, the four bots
+and the agent included, reads `"0"`.
 
 ---
 

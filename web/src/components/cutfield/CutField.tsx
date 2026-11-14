@@ -200,8 +200,9 @@ function Legend({ charged, flat }: { charged: number; flat?: string }) {
         ) : (
           <>
             {charged} charged {charged === 1 ? "fee" : "fees"}. Each amber sliver breaks into
-            three pieces and flies to its post in the 50 / 20 / 30 split — trader left, referrer
-            centre, protocol right.
+            three pieces and flies to its post — trader left, referrer centre, protocol right.
+            When the trade copied nobody there is no trader and no referrer to pay, so all
+            three shares land on the protocol&apos;s post.
           </>
         )}
       </p>
