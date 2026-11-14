@@ -233,9 +233,9 @@ cd agent && npm start                    # DRY_RUN=1 to decide without signing
   measuring entirely, at the cost of a round trip.
 - **The maker drains on a trend.** It sells the base token when the pool is rich and buys when
   it is cheap, so a sustained mainnet rally empties its base inventory and the peg drifts up
-  until it is topped up. Right now MLONK is **+10.1%** and MNEAR **+1.4%** off peg for exactly
-  that reason — the maker holds 0 MLONK and 0 wNEAR. The log reports the drift every minute
-  rather than hiding it, and the UI shows the pool price, not the peg.
+  until somebody tops it up. Right now MLONK is **+10.1%** off peg for exactly that reason: the
+  maker holds **0 MLONK** and cannot sell what it does not have. The log states the drift every
+  minute rather than hiding it, and the UI shows the pool price, never the peg.
 - **Market orders only**, and **copying is attribution, not mirroring** — naming a trader pays
   them a share of your profit fee, it does not place their trades for you.
 - **Last 500 trades on chain**, older ones in the NEP-297 event log, so state cannot grow
