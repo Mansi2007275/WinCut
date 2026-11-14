@@ -14,7 +14,7 @@
  */
 
 import { RISK, USDC_DECIMALS } from "./config.js";
-import type { PositionView } from "./chain.js";
+import type { PositionView, Trade } from "./chain.js";
 
 export type Action = "BUY" | "SELL" | "HOLD";
 
@@ -94,6 +94,14 @@ export function vet(
     knownTokens: Set<string>;
     /** Quote-side depth per market, for the pool cap. Missing means uncapped. */
     depthUsdc?: Map<string, number>;
+    /**
+     * Every open position on chain, which is not always the same list as
+     * `states`: a position in a market the agent could not price this pass has
+     * no mid and so no state, but it is still a position, and both the
+     * position cap and the one-per-market rule have to count it. Defaults to
+     * the positions behind `states` when it is not given.
+     */
+    openPositions?: PositionView[];
   },
 ): Pass | Veto {
   if (proposal.action === "HOLD") return { ok: true, proposal };
@@ -127,9 +135,31 @@ export function vet(
   }
 
   // BUY
-  const open = ctx.states.filter((s) => toUnits(s.position.amount, s.position.decimals) > 0);
-  const alreadyHeld = open.some((s) => s.position.token_id === proposal.tokenId);
-  if (!alreadyHeld && open.length >= RISK.maxOpenPositions) {
+  const open = ctx.openPositions ?? ctx.states.map((s) => s.position);
+  const alreadyHeld = open.some((p) => p.token_id === proposal.tokenId);
+
+  // One position per market.
+  //
+  // Averaging into an open position is a strategy; doing it every five minutes
+  // because the same momentum reading is still true is a loop. The agent put
+  // five consecutive buys into MDRAGON that way, each one both a reaction to
+  // the trend and a push on it, and the position cap never fired because a
+  // repeat buy was not a new position. The stop loss and take profit are
+  // measured against a single cost basis, so a position that keeps being added
+  // to is also a position whose exit keeps moving away from it.
+  //
+  // So a market the agent is already in is closed to new buys until it exits.
+  if (alreadyHeld) {
+    const symbol = open.find((p) => p.token_id === proposal.tokenId)?.symbol ?? proposal.tokenId;
+    return {
+      ok: false,
+      reason:
+        `Already holding ${symbol}. The agent takes one position per market and adds nothing ` +
+        `to it - this one is closed until that position is sold.`,
+    };
+  }
+
+  if (open.length >= RISK.maxOpenPositions) {
     return {
       ok: false,
       reason:
@@ -206,12 +236,30 @@ export function vet(
   return { ok: true, proposal };
 }
 
-/** Trades in the rolling 24h window, from the contract's own trade log. */
-export function countRecentTrades(trades: { timestamp_ns: string }[]): number {
-  const cutoff = BigInt(Date.now() - 24 * 60 * 60 * 1000) * 1_000_000n;
+/**
+ * Trades in the rolling 24 hours, from the contract's own trade log.
+ *
+ * The field is `timestamp`, in nanoseconds, which is what the contract's
+ * `Trade` carries. This function read `timestamp_ns` for its whole life: every
+ * row threw on `BigInt(undefined)`, every throw was swallowed by the catch,
+ * and the count came back 0 no matter how many trades the account had made.
+ * The daily limit was therefore never once enforced, and the agent's own page
+ * reported "0 trades in 24h" beside a ring full of its trades.
+ *
+ * `timestamp_ns` is still accepted, because a count that silently reads zero
+ * is the failure worth defending against twice.
+ */
+export function countRecentTrades(
+  trades: Pick<Trade, "timestamp">[] | { timestamp_ns?: string | number }[],
+  now = Date.now(),
+): number {
+  const cutoff = BigInt(now - 24 * 60 * 60 * 1000) * 1_000_000n;
   return trades.filter((t) => {
+    const raw = (t as { timestamp?: string | number }).timestamp ??
+      (t as { timestamp_ns?: string | number }).timestamp_ns;
+    if (raw === undefined || raw === null || raw === "") return false;
     try {
-      return BigInt(t.timestamp_ns) >= cutoff;
+      return BigInt(raw) >= cutoff;
     } catch {
       return false;
     }

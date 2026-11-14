@@ -9,7 +9,7 @@
  * rests on must not change size with the token.
  */
 
-import { buildPrompt, candleMoves, fallbackDecision } from "../src/brain.js";
+import { buildPrompt, candleMoves, describeLlmFailure, fallbackDecision } from "../src/brain.js";
 import type { MarketView } from "../src/market.js";
 import type { PositionState } from "../src/risk.js";
 import { positionState } from "../src/risk.js";
@@ -96,6 +96,30 @@ check("the fallback can act on a tiny-priced market", (() => {
   // momentum 0.55% clears the 0.35% entry, so it should buy something.
   const d = fallbackDecision(markets, [], 114.53);
   return d.action === "BUY" && !!d.tokenId;
+})());
+
+console.log("the fallback does not re-enter a market it is already in");
+check("a market already held is not proposed again", (() => {
+  const d = fallbackDecision(markets, states, 114.53);
+  // MDRAGON is the held one and the one with momentum; with it closed there is
+  // nothing left above the entry threshold, so the honest answer is HOLD.
+  return d.action !== "BUY" || d.tokenId !== held.token_id;
+})());
+
+console.log("what the log says when the model is unreachable");
+check("402 is named as missing credits, not as a broken model", (() => {
+  const line = describeLlmFailure({ error: "responded 402: No spending limit configured", status: 402 });
+  return line === "AI: unavailable (402, no credits), using momentum fallback";
+})());
+check("another status is reported as itself", (() => {
+  return describeLlmFailure({ error: "responded 500", status: 500 }) ===
+    "AI: unavailable (500), using momentum fallback";
+})());
+check("a failure with no status still says what happened", (() => {
+  return /timed out/.test(describeLlmFailure({ error: "timed out" }));
+})());
+check("the line says the fallback is what decided", (() => {
+  return /momentum fallback/.test(describeLlmFailure({ error: "x", status: 402 }));
 })());
 
 console.log(`\n${pass} passed, ${fail} failed`);

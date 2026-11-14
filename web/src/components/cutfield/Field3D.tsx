@@ -54,6 +54,32 @@ const POST_Y = 2.2;
 
 const dummy = new THREE.Object3D();
 
+/** Assigned to meshes that must never be hit-tested. */
+const noRaycast = () => {};
+
+/**
+ * Instances allocated per mesh, fixed.
+ *
+ * It has to be fixed. `args` on an instancedMesh is constructor arguments:
+ * react-three-fiber applies them once, when the object is created, and does
+ * not rebuild it when they change. Sizing the buffer from `items.length` meant
+ * the first render - with the ring still loading, so zero items - allocated a
+ * single instance, and every later write of two hundred matrices ran off the
+ * end of a buffer with room for one. That is not a React warning, it is a
+ * renderer that stops responding.
+ *
+ * The contract's ring holds 500 trades, so 512 is the most any of these meshes
+ * can ever need, and eight meshes of 512 instances is nothing to a GPU.
+ */
+const CAPACITY = 512;
+
+/**
+ * Capacity rounded up in steps, so the buffer is re-allocated rarely and is
+ * never much bigger than the data. `args` is constructor-only, so growing it
+ * means remounting the mesh - which is what the `key` on each one does.
+ */
+const bucket = (n: number): number => Math.min(CAPACITY, Math.max(64, Math.ceil(n / 64) * 64));
+
 /** One instanced box set, positioned from a list of transforms. */
 function Boxes({
   items,
@@ -68,29 +94,45 @@ function Boxes({
   width: number;
   depth: number;
   opacity?: number;
+  /**
+   * Omit it and the mesh opts out of raycasting entirely.
+   *
+   * This is the difference between a scene that orbits smoothly and one that
+   * does not. react-three-fiber re-tests the pointer against the scene as the
+   * camera moves, and every interactive instanced mesh costs its full instance
+   * count on each of those tests. Seven of them at 512 instances is a quarter
+   * of a million intersection tests a second, spent almost entirely on the
+   * decorative layers - a fee slice sits on top of a pillar that already has
+   * the same tooltip, and the credit haze has none at all.
+   */
   onHover?: (index: number | null, event?: ThreeEvent<PointerEvent>) => void;
 }) {
   const mesh = useRef<THREE.InstancedMesh>(null);
+  const size = bucket(items.length);
 
   useEffect(() => {
     const m = mesh.current;
     if (!m) return;
-    items.forEach((it, n) => {
+    const drawn = Math.min(items.length, size);
+    for (let n = 0; n < drawn; n++) {
+      const it = items[n]!;
       dummy.position.set(it.x, it.y, it.z);
       dummy.scale.set(1, Math.max(Math.abs(it.h), 0.001), 1);
       dummy.updateMatrix();
       m.setMatrixAt(n, dummy.matrix);
-    });
-    m.count = items.length;
+    }
+    m.count = drawn;
     m.instanceMatrix.needsUpdate = true;
     m.computeBoundingSphere();
-  }, [items]);
+  }, [items, size]);
 
   if (!items.length) return null;
   return (
     <instancedMesh
       ref={mesh}
-      args={[undefined, undefined, Math.max(items.length, 1)]}
+      key={size}
+      args={[undefined, undefined, size]}
+      raycast={onHover ? undefined : noRaycast}
       onPointerMove={
         onHover
           ? (e) => {
@@ -307,8 +349,8 @@ function Scene({
       <Boxes items={buys} color={COLORS.buy} width={0.1} depth={0.1} onHover={pick} />
       <Boxes items={wins} color={COLORS.profit} width={0.17} depth={0.17} onHover={pick} />
       <Boxes items={losses} color={COLORS.loss} width={0.17} depth={0.17} onHover={pick} />
-      <Boxes items={feeSlices} color={COLORS.fee} width={0.21} depth={0.21} onHover={pick} />
-      <Boxes items={shelteredSlices} color={COLORS.credit} width={0.21} depth={0.21} onHover={pick} />
+      <Boxes items={feeSlices} color={COLORS.fee} width={0.21} depth={0.21} />
+      <Boxes items={shelteredSlices} color={COLORS.credit} width={0.21} depth={0.21} />
       <Boxes items={haze} color={COLORS.credit} width={0.34} depth={0.34} opacity={0.14} />
       <Boxes items={agents} color="#e6e8eb" width={0.13} depth={0.13} />
 

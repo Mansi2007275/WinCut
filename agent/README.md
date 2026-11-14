@@ -137,7 +137,7 @@ npm run dry              # one real decision from live data, nothing signed
 | `AGENT_ACCOUNT_ID` | no | Defaults to `agent.<contract>`. |
 | `WINCUT_CONTRACT_ID` | no | Defaults to `wincut-mansi.testnet`. |
 | `NEAR_NETWORK` | no | `testnet` (default) or `mainnet`. |
-| `NEAR_RPC_URLS` | no | Comma-separated endpoints, tried in order, with failover on 429/5xx and a 60s rest for whichever rate-limited. Defaults to dRPC then FastNEAR then near.org, in that order, so the agent leads with a different endpoint than `bots/` does. `NEAR_RPC_URL` still works as a single-endpoint override. |
+| `NEAR_RPC_URLS` | no | Comma-separated endpoints, tried in order, with failover on 429/5xx and a 60s rest for whichever rate-limited. Defaults to `near-testnet.drpc.org` then `rpc.testnet.near.org`. FastNEAR is refused whatever is set here - its free testnet tier rate-limited a steady share of these reads, and because a 429 fails over rather than failing, the cost of it was invisible. `NEAR_RPC_URL` still works as a single-endpoint override, and the signer uses the first endpoint only. |
 | `VIEW_CACHE_MS` | no | How long an identical view may be answered from cache. Defaults to 12000. |
 | `AGENT_MARKETS` | no | Comma-separated symbols the agent may trade. Defaults to the four mirror markets on testnet. Without it the agent reads every token the contract has listed, including the dead testnet ones. |
 | `NEAR_AI_API_KEY` | no | NEAR AI Cloud. Without it the momentum fallback decides, and the log says which decided. |
@@ -239,10 +239,12 @@ part of the record that says how often the agent correctly did nothing.
 | File | What lives there |
 | --- | --- |
 | `src/config.ts` | Environment, and the hard limits |
-| `src/chain.ts` | Views over JSON-RPC; the only place that signs; `get_return` quotes |
+| `src/chain.ts` | Views over JSON-RPC; the only place that signs; `confirmTx`; `get_return` quotes |
 | `src/market.ts` | Mid price along a route, pool depth, candles, momentum |
 | `src/brain.ts` | The NEAR AI Cloud call, and the momentum fallback |
 | `src/risk.ts` | Forced exits, and the veto that every proposal passes through |
+| `src/settle.ts` | What the chain says a sent trade did, which outranks what the broadcast said |
 | `src/store.ts` | The Upstash decision log |
 | `src/index.ts` | The loop |
-| `test/risk.test.ts` | 20 checks that each limit rejects what it claims to |
+| `test/risk.test.ts` | Checks that each limit rejects what it claims to, and that the 24h count reads the contract's own `timestamp` |
+| `test/settle.test.ts` | An RPC error after the chain has already succeeded still records the trade |

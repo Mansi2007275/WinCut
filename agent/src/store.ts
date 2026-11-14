@@ -53,8 +53,21 @@ export type DecisionEntry = {
   vetoed?: { action: Action; reason: string };
   inputs: DecisionInputs;
   txHash?: string;
-  /** Set when a signed trade failed on chain. */
+  /**
+   * Set only when the chain confirms the trade failed, or it never landed.
+   *
+   * Never set because a broadcast returned an error: see `settle.ts`. The
+   * public page renders this as "the transaction failed", so it has to mean
+   * the chain said so.
+   */
   error?: string;
+  /**
+   * Set when the broadcast reported trouble the chain then contradicted - the
+   * RPC error is kept rather than hidden, it is simply not called a failure.
+   */
+  note?: string;
+  /** Said once per pass when the model could not be reached. */
+  llmStatus?: string;
   dryRun: boolean;
 };
 

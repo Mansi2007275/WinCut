@@ -1,0 +1,75 @@
+1
+00:00:00,000 --> 00:00:05,000
+Every trading app gets paid when you lose.
+
+2
+00:00:05,000 --> 00:00:11,500
+WinCut doesn't.
+
+3
+00:00:12,000 --> 00:00:19,000
+Drag the exit price below the entry.
+
+4
+00:00:19,000 --> 00:00:31,500
+The fee stays at zero — and the loss is banked as a credit.
+
+5
+00:00:32,000 --> 00:00:39,000
+Only a profit is charged: 10% of it.
+
+6
+00:00:39,000 --> 00:00:47,500
+Split trader 50 / referrer 20 / protocol 30.
+
+7
+00:00:48,000 --> 00:00:54,000
+Four markets on NEAR testnet.
+
+8
+00:00:54,000 --> 00:01:04,500
+Prices are live Ref Finance pool reserves, not a mock feed.
+
+9
+00:01:05,000 --> 00:01:19,500
+5-minute candles, built from the pool's own swaps.
+
+10
+00:01:20,000 --> 00:01:30,000
+A real buy, signed on testnet.
+
+11
+00:01:30,000 --> 00:01:49,500
+The contract holds the position. The wallet never does.
+
+12
+00:01:50,000 --> 00:02:00,000
+Now a losing exit.
+
+13
+00:02:00,000 --> 00:02:08,000
+Fee charged: 0.00
+
+14
+00:02:08,000 --> 00:02:19,500
+The loss became credit against the next win.
+
+15
+00:02:20,000 --> 00:02:37,500
+The same trade on the NEAR explorer. Nothing was taken.
+
+16
+00:02:38,000 --> 00:02:46,000
+343 settled trades. 97 losing exits. Zero fees on every one.
+
+17
+00:02:46,000 --> 00:02:51,500
+One fee ever charged: 0.076611 tUSDC — a tenth of a 0.77 profit.
+
+18
+00:02:52,000 --> 00:02:56,000
+The AI agent holds a key that can only buy and sell.
+
+19
+00:02:56,000 --> 00:03:00,000
+It cannot withdraw. Not by permission — by the key itself.

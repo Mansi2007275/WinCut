@@ -18,14 +18,44 @@
  *   The endpoint pool. When one endpoint rate-limits, the call goes to the next
  *   rather than failing. An endpoint that returns 429 is put in a cooldown, so
  *   we stop paying a round trip to learn the same thing every call. The pool is
- *   ordered, and the order is configuration: the bots lead with one endpoint
- *   and the agent with another, so two processes sharing a free tier are not
- *   also sharing a single bucket.
+ *   ordered, and the order is configuration. One endpoint is not in it at all:
+ *   see `REFUSED_RPC_HOSTS` below for why FastNEAR was taken out rather than
+ *   merely demoted.
  *
  *   Saying so. Every rate limit prints one line naming the endpoint. Falling
  *   back to a second endpoint is the system working, but it is also the only
  *   warning you get before the second one runs out too.
  */
+
+/**
+ * Endpoints this agent will not use, whatever it is told.
+ *
+ * FastNEAR's free testnet tier rate-limited a large share of this agent's
+ * reads. Because a 429 fails over rather than failing, the only visible
+ * symptom was passes that took longer and sometimes gave up altogether, with
+ * the real cause buried in a log line most people never read. Deleting it from
+ * the default list was not enough on its own: a `NEAR_RPC_URL` left over in a
+ * shell or a deploy config puts it straight back. So the refusal lives here,
+ * at the one place every endpoint has to pass through, and `withoutRefusedRpc`
+ * is applied to configuration as well as to the defaults.
+ */
+const REFUSED_RPC_HOSTS = [/(^|\.)fastnear\.com$/i];
+
+const refusedRpc = (url: string): boolean => {
+  let host: string;
+  try {
+    host = new URL(url).hostname;
+  } catch {
+    // Not a URL at all; let the pool fail on it loudly rather than silently
+    // dropping something that might have been meant as an endpoint.
+    return false;
+  }
+  return REFUSED_RPC_HOSTS.some((re) => re.test(host));
+};
+
+/** The endpoints from `urls` that this agent is allowed to talk to. */
+export const withoutRefusedRpc = (urls: string[]): string[] =>
+  urls.filter((u) => u.trim() && !refusedRpc(u.trim()));
 
 export class RpcError extends Error {
   constructor(message: string) {
@@ -73,7 +103,7 @@ export class RpcPool {
     urls: string[],
     private readonly log: (s: string) => void = console.log,
   ) {
-    const unique = [...new Set(urls.map((u) => u.trim()).filter(Boolean))];
+    const unique = [...new Set(withoutRefusedRpc(urls).map((u) => u.trim()))];
     if (!unique.length) throw new RpcError(`${label}: no RPC endpoints configured`);
     this.endpoints = unique.map((url) => ({
       url, cooldownUntil: 0, calls: 0, rateLimits: 0, failures: 0,
@@ -101,13 +131,23 @@ export class RpcPool {
     return [...ready, ...cooling];
   }
 
-  async view<T>(
-    accountId: string,
+  /**
+   * One JSON-RPC call, failed over across the pool.
+   *
+   * `decode` turns the node's `result` into the value the caller wanted, and
+   * it runs before anything is cached - so a response the caller cannot use is
+   * never remembered as if it were an answer. A decode that throws `RpcError`
+   * is a real protocol answer rather than a sick endpoint, so it is not failed
+   * over: every other endpoint would say the same thing.
+   */
+  async call<T>(
     method: string,
-    args: unknown = {},
-    opts: ViewOptions = {},
+    params: unknown,
+    decode: (result: unknown) => T,
+    opts: ViewOptions & { label?: string } = {},
   ): Promise<T> {
-    const key = `${accountId}|${method}|${JSON.stringify(args)}`;
+    const label = opts.label ?? method;
+    const key = `${method}|${JSON.stringify(params)}`;
     const ttl = opts.cacheMs ?? 0;
 
     if (ttl > 0 && !opts.fresh) {
@@ -118,19 +158,7 @@ export class RpcPool {
       }
     }
 
-    const body = JSON.stringify({
-      jsonrpc: "2.0",
-      id: 1,
-      method: "query",
-      params: {
-        request_type: "call_function",
-        finality: "final",
-        account_id: accountId,
-        method_name: method,
-        args_base64: Buffer.from(JSON.stringify(args)).toString("base64"),
-      },
-    });
-
+    const body = JSON.stringify({ jsonrpc: "2.0", id: 1, method, params });
     const problems: string[] = [];
 
     for (const endpoint of this.order()) {
@@ -161,10 +189,7 @@ export class RpcPool {
           continue;
         }
 
-        const json = (await res.json()) as {
-          error?: unknown;
-          result?: { result?: number[]; error?: string };
-        };
+        const json = (await res.json()) as { error?: unknown; result?: unknown };
 
         // A -429 arrives inside a 200 on some endpoints, so the body has to be
         // checked for it as well as the status line.
@@ -181,15 +206,25 @@ export class RpcPool {
           continue;
         }
 
+        // Not every endpoint serves every method: dRPC answers
+        // `EXPERIMENTAL_tx_status` and refuses `tx_status`, and
+        // rpc.testnet.near.org is the other way round. That is a fact about
+        // the endpoint, not about the request, so it fails over like any
+        // other endpoint problem rather than ending the call.
+        if (errText.includes("-32601") || /method is not available|method not found/i.test(errText)) {
+          endpoint.failures++;
+          endpoint.cooldownUntil = Date.now() + FAILURE_COOLDOWN_MS;
+          problems.push(`${short(endpoint.url)} no ${method}`);
+          continue;
+        }
+
         if (json.error) {
           // A real protocol error - the same answer would come from any
           // endpoint, so there is nothing to fail over to.
           throw new RpcError(`rpc: ${errText.slice(0, 180)}`);
         }
-        if (json.result?.error) throw new RpcError(`${accountId}.${method}: ${json.result.error}`);
-        if (!json.result?.result) throw new RpcError(`${accountId}.${method}: empty result`);
 
-        const value = JSON.parse(Buffer.from(json.result.result).toString()) as T;
+        const value = decode(json.result);
         if (ttl > 0) this.cache.set(key, { at: Date.now(), value });
         return value;
       } catch (e) {
@@ -200,8 +235,32 @@ export class RpcPool {
       }
     }
 
-    throw new RpcError(
-      `${accountId}.${method}: every endpoint failed - ${problems.join("; ")}`,
+    throw new RpcError(`${label}: every endpoint failed - ${problems.join("; ")}`);
+  }
+
+  async view<T>(
+    accountId: string,
+    method: string,
+    args: unknown = {},
+    opts: ViewOptions = {},
+  ): Promise<T> {
+    const label = `${accountId}.${method}`;
+    return this.call<T>(
+      "query",
+      {
+        request_type: "call_function",
+        finality: "final",
+        account_id: accountId,
+        method_name: method,
+        args_base64: Buffer.from(JSON.stringify(args)).toString("base64"),
+      },
+      (result) => {
+        const r = result as { result?: number[]; error?: string } | undefined;
+        if (r?.error) throw new RpcError(`${label}: ${r.error}`);
+        if (!r?.result) throw new RpcError(`${label}: empty result`);
+        return JSON.parse(Buffer.from(r.result).toString()) as T;
+      },
+      { ...opts, label },
     );
   }
 
