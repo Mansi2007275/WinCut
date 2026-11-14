@@ -49,6 +49,43 @@ check("adding to one of the 3 held is allowed", vet({ action: "BUY", tokenId: "a
 check("the daily cap is refused", !buy(5, { tradesLast24h: RISK.maxTradesPerDay }).ok);
 check("one under the daily cap is allowed", buy(5, { tradesLast24h: RISK.maxTradesPerDay - 1 }).ok);
 
+console.log("the pool depth cap");
+// 1.5% of a 400 tUSDC pool is 6, well under the 20 the balance cap allows -
+// which is the whole point: the two limits answer different questions.
+const depth = (usdc: number) => new Map([["a.testnet", usdc]]);
+const buyIn = (sizeUsdc: number, poolUsdc: number) =>
+  vet({ action: "BUY", tokenId: "a.testnet", sizeUsdc, reason: "t" }, { ...base, depthUsdc: depth(poolUsdc) });
+
+check("a buy inside the pool cap passes unchanged", (() => {
+  const v = buyIn(5, 400);
+  return v.ok && v.proposal.sizeUsdc === 5 && v.proposal.reason === "t";
+})());
+check("a buy over the pool cap is trimmed, not refused", (() => {
+  const v = buyIn(20, 400);
+  return v.ok && v.proposal.sizeUsdc === 6;
+})());
+check("the trim is written into the reason", (() => {
+  const v = buyIn(20, 400);
+  return v.ok && /trimmed from 20\.00 to 6\.00/.test(v.proposal.reason);
+})());
+check("exactly at the cap is not trimmed", (() => {
+  const v = buyIn(6, 400);
+  return v.ok && v.proposal.sizeUsdc === 6 && v.proposal.reason === "t";
+})());
+check("a deep pool leaves the balance cap binding", (() => {
+  const v = buyIn(20, 100_000);
+  return v.ok && v.proposal.sizeUsdc === 20;
+})());
+check("a pool too thin for the minimum is refused", !buyIn(5, 50).ok);
+check("no depth given means no pool cap", (() => {
+  const v = vet({ action: "BUY", tokenId: "a.testnet", sizeUsdc: 20, reason: "t" }, base);
+  return v.ok && v.proposal.sizeUsdc === 20;
+})());
+check("the pool cap never overrides the balance cap", !vet(
+  { action: "BUY", tokenId: "a.testnet", sizeUsdc: 50, reason: "t" },
+  { ...base, depthUsdc: depth(100_000) },
+).ok);
+
 console.log("sell limits");
 const held = { ...base, states: [one("A", 100)] };
 held.states[0]!.position.token_id = "a.testnet";

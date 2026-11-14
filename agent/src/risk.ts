@@ -92,6 +92,8 @@ export function vet(
     states: PositionState[];
     tradesLast24h: number;
     knownTokens: Set<string>;
+    /** Quote-side depth per market, for the pool cap. Missing means uncapped. */
+    depthUsdc?: Map<string, number>;
   },
 ): Pass | Veto {
   if (proposal.action === "HOLD") return { ok: true, proposal };
@@ -153,6 +155,41 @@ export function vet(
 
   if (size > ctx.balanceUsdc) {
     return { ok: false, reason: `Proposed ${size.toFixed(2)} against a balance of ${ctx.balanceUsdc.toFixed(2)}.` };
+  }
+
+  // The pool cap is the one limit here that trims instead of refusing, and the
+  // asymmetry is deliberate. Every other limit describes a state that changes:
+  // the balance cap is satisfied by proposing less next pass, the position
+  // limit by an exit, the daily cap by waiting. A pool's depth is not going to
+  // change because we refused, so refusing on it would mean an agent that
+  // never trades a thin market while filling its log with explanations. It is
+  // trimmed, and the trim is written into the reason so the public log says the
+  // size was ours and not the model's.
+  const depth = ctx.depthUsdc?.get(proposal.tokenId);
+  if (depth !== undefined && depth > 0) {
+    const depthCap = depth * RISK.maxShareOfPoolDepth;
+    if (depthCap < RISK.minTradeUsdc) {
+      return {
+        ok: false,
+        reason:
+          `${proposal.tokenId} has only ${depth.toFixed(0)} tUSDC of depth, so the ` +
+          `${RISK.maxShareOfPoolDepth * 100}% pool cap is ${depthCap.toFixed(2)} - below the ` +
+          `${RISK.minTradeUsdc} minimum. The market is too thin to trade without moving it.`,
+      };
+    }
+    if (size > depthCap + 1e-9) {
+      return {
+        ok: true,
+        proposal: {
+          ...proposal,
+          sizeUsdc: Math.floor(depthCap * 100) / 100,
+          reason:
+            `${proposal.reason} (trimmed from ${size.toFixed(2)} to ${depthCap.toFixed(2)} tUSDC: ` +
+            `the pool holds ${depth.toFixed(0)} tUSDC and one trade may take ` +
+            `${RISK.maxShareOfPoolDepth * 100}% of it)`,
+        },
+      };
+    }
   }
 
   return { ok: true, proposal };

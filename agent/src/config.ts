@@ -90,6 +90,46 @@ export const PRIMARY_MARKET_TOKEN_ID =
  */
 export const TIMEFRAME = optional("AGENT_TIMEFRAME") ?? "5m";
 
+/**
+ * The markets the agent is allowed to trade, as token ids.
+ *
+ * The contract still lists six older testnet tokens from before WinCut ran its
+ * own market: wNEAR, LNC, PEM, pNEAR, MEV, SHIT1. Their pools are dead, so
+ * their "prices" are whatever the last person to touch them left behind - and
+ * five of the six report an identical momentum because they share one route
+ * hop, which is the giveaway that nothing in them is a price at all. The web
+ * app stops showing them by listing the four mirrors in NEXT_PUBLIC_TOKENS,
+ * but that is a display filter and the agent never saw it: it was reading all
+ * ten and could have put real balance into a market with no counterparty.
+ *
+ * Empty means every registered market, which is the right default on mainnet
+ * where the listed markets are real ones.
+ */
+export const AGENT_MARKETS: string[] = (
+  optional("AGENT_MARKETS") ??
+  (NETWORK === "testnet"
+    ? [
+        "mnear.tkn.primitives.testnet",
+        "mdragon.tkn.primitives.testnet",
+        "mshitzu.tkn.primitives.testnet",
+        "mlonk.tkn.primitives.testnet",
+      ].join(",")
+    : "")
+)
+  .split(",")
+  .map((x) => x.trim())
+  .filter(Boolean);
+
+/**
+ * A price at whatever scale it happens to be.
+ *
+ * `toFixed(6)` printed MDRAGON as 0.000000, which is not a rounding problem but
+ * a reporting one: it says the price is zero. The web app already counts the
+ * zeros instead; the agent's own log had been left behind.
+ */
+export const fmtPrice = (p: number | undefined): string =>
+  p === undefined || !Number.isFinite(p) ? "n/a" : p >= 0.001 ? p.toFixed(6) : p.toPrecision(6);
+
 /** Where the web app reads candles from, for the agent's own market view. */
 export const WEB_BASE_URL = optional("WINCUT_WEB_URL") ?? "https://wincut.vercel.app";
 
@@ -103,6 +143,22 @@ export const WEB_BASE_URL = optional("WINCUT_WEB_URL") ?? "https://wincut.vercel
 export const RISK = {
   /** Share of the agent's WinCut balance a single buy may spend. */
   maxShareOfBalancePerTrade: 0.2,
+  /**
+   * Share of the market's pool depth a single buy may take.
+   *
+   * A cap measured against the market instead of against the wallet. 20% of a
+   * 200 tUSDC balance is 40 tUSDC, which is a sober size next to the 1,000
+   * tUSDC MNEAR pool and 8% of the depth of a 400 tUSDC memecoin pool. One
+   * such buy moved MLONK 20% off its peg; the market maker spent the next
+   * several minutes undoing it, and the chart kept a spike that recorded
+   * nothing except the agent trading against itself through a pool too thin to
+   * absorb it. A limit on how much of its own money the agent risks says
+   * nothing about how much of the market it displaces, and the second question
+   * is the one a thin pool asks.
+   *
+   * 1.5% of the quote reserve moves a constant-product price by roughly 3%.
+   */
+  maxShareOfPoolDepth: 0.015,
   /** Positions open at once. A fourth idea has to wait for an exit. */
   maxOpenPositions: 3,
   /** Unrealised loss that forces a sell, regardless of what the model thinks. */

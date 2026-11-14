@@ -43,12 +43,28 @@ function reserves(pool: RawPool, a: string, aDec: number, b: string, bDec: numbe
   return { rA, rB };
 }
 
+/**
+ * USD per NEAR, cached for a few seconds.
+ *
+ * Every peg is denominated in it, so a maker pass over four markets asked for
+ * it four times and read the same mainnet pool four times to get the same
+ * answer. That is three wasted round trips per pass, and with four markets the
+ * whole package's RPC traffic quadrupled at once - enough to start collecting
+ * 429s from a free endpoint. The window is short on purpose: the point is to
+ * collapse one pass's repeated reads, not to trade on a stale price.
+ */
+let nearUsdCache: { at: number; price: number } | undefined;
+const NEAR_USD_TTL_MS = 10_000;
+
 /** USD per NEAR, from mainnet Rhea's deepest wNEAR/USDC pool. */
 export async function readNearUsd(): Promise<number> {
+  const hit = nearUsdCache;
+  if (hit && Date.now() - hit.at < NEAR_USD_TTL_MS) return hit.price;
   const pool = await mainnetPool(PEG.poolId);
   const { rA, rB } = reserves(pool, PEG.usdc, PEG.usdcDecimals, PEG.wnear, PEG.wnearDecimals);
   const price = rA / rB;
   if (!(price > 0) || !Number.isFinite(price)) throw new Error("the NEAR peg came back unusable");
+  nearUsdCache = { at: Date.now(), price };
   return price;
 }
 

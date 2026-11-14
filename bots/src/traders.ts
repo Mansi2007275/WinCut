@@ -182,10 +182,14 @@ const marketStateFor = (accountId: string, poolId: number): MarketState => {
  * run announcing a trade it was never going to make. A limit should shape the
  * trade, not cancel it.
  */
-function buyCeiling(balanceUsdc: number): number {
+function buyCeiling(balanceUsdc: number, quoteReserve?: number): number {
   const cap = balanceUsdc * BOT_RISK.maxShareOfBalancePerTrade;
   const spendable = Math.max(0, balanceUsdc - BOT_RISK.reserveUsdc);
-  return round2(Math.min(cap, spendable));
+  const depthCap =
+    quoteReserve !== undefined && quoteReserve > 0
+      ? quoteReserve * BOT_RISK.maxShareOfPoolDepth
+      : Infinity;
+  return round2(Math.min(cap, spendable, depthCap));
 }
 
 // ------------------------------------------------------------- the strategies
@@ -307,11 +311,12 @@ function liquidityTrade(
   state: BotState,
   balanceUsdc: number,
   positionTokens: number,
+  quoteReserve?: number,
 ): BotDecision | undefined {
   if (Date.now() < (state.nextLiquidityAt ?? Infinity)) return undefined;
 
   const quiet = Math.round((Date.now() - (state.lastTradeAt ?? state.dayStartedAt)) / 60_000);
-  const ceiling = Math.min(bot.sizeUsdc, buyCeiling(balanceUsdc));
+  const ceiling = Math.min(bot.sizeUsdc, buyCeiling(balanceUsdc, quoteReserve));
   const canBuy = ceiling >= BOT_RISK.minTradeUsdc;
   const canSell = positionTokens > 0;
   if (!canBuy && !canSell) return undefined;
@@ -366,6 +371,8 @@ export async function runBot(
   market: MarketConfig,
   history: PriceHistory,
   log: (s: string) => void,
+  /** The pool's quote-side reserve, so size can be capped against the market. */
+  quoteReserve?: number,
 ): Promise<BotPass> {
   const state = stateFor(bot.accountId);
   const mstate = marketStateFor(bot.accountId, market.poolId);
@@ -393,7 +400,7 @@ export async function runBot(
   // The strategy had nothing to say. If it has had nothing to say for long
   // enough, trade anyway - and say that that is why.
   if (decision.action === "HOLD") {
-    const timed = liquidityTrade(bot, state, balanceUsdc, positionTokens);
+    const timed = liquidityTrade(bot, state, balanceUsdc, positionTokens, quoteReserve);
     if (timed) {
       log(`  ${bot.accountId.split(".")[0]} ${market.symbol}: strategy held - ${decision.reason}`);
       decision = timed;
@@ -410,20 +417,21 @@ export async function runBot(
       pass.vetoed = `${state.tradesToday} trades today, at the ${BOT_RISK.maxTradesPerDayEach} cap`;
     } else if (decision.action === "BUY") {
       const asked = decision.sizeUsdc ?? 0;
-      const ceiling = buyCeiling(balanceUsdc);
+      const ceiling = buyCeiling(balanceUsdc, quoteReserve);
       const size = Math.min(asked, ceiling);
       if (size < BOT_RISK.minTradeUsdc) {
         // The only honest refusal left: there is not enough to trade with.
         pass.vetoed =
-          `${balanceUsdc.toFixed(2)} tUSDC leaves at most ${ceiling.toFixed(2)} tradable once the ` +
-          `${(BOT_RISK.maxShareOfBalancePerTrade * 100).toFixed(0)}% cap and the ` +
-          `${BOT_RISK.reserveUsdc} reserve are applied, below the ${BOT_RISK.minTradeUsdc} minimum`;
+          `${balanceUsdc.toFixed(2)} tUSDC and ${
+            quoteReserve === undefined ? "unknown" : quoteReserve.toFixed(0)
+          } tUSDC of depth leave at most ${ceiling.toFixed(2)} tradable, below the ` +
+          `${BOT_RISK.minTradeUsdc} minimum`;
       } else if (size < asked) {
         decision = { ...decision, sizeUsdc: size };
         pass.decision = decision;
         log(
-          `  ${bot.accountId.split(".")[0]}: trimming the buy from ${asked.toFixed(2)} to ` +
-          `${size.toFixed(2)} to stay inside its limits`,
+          `  ${bot.accountId.split(".")[0]} ${market.symbol}: trimming the buy from ` +
+          `${asked.toFixed(2)} to ${size.toFixed(2)} to stay inside its limits`,
         );
       }
     } else if (decision.action === "SELL" && !held) {
@@ -440,12 +448,12 @@ export async function runBot(
     return pass;
   }
   if (DRY_RUN) {
-    log(`  ${bot.accountId.split(".")[0]}: would ${decision.action} - ${decision.reason} (dry run)`);
+    log(`  ${bot.accountId.split(".")[0]} ${market.symbol}: would ${decision.action} - ${decision.reason} (dry run)`);
     return pass;
   }
   if (!bot.privateKey) {
     pass.vetoed = "no key configured";
-    log(`  ${bot.accountId.split(".")[0]}: would ${decision.action} but has no key`);
+    log(`  ${bot.accountId.split(".")[0]} ${market.symbol}: would ${decision.action} but has no key`);
     return pass;
   }
 

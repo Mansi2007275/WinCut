@@ -64,6 +64,7 @@ function buildPrompt(
     `- at most ${RISK.maxTradesPerDay} trades per 24 hours`,
     `- a position past ${RISK.stopLossPct}% or +${RISK.takeProfitPct}% is closed automatically before you are asked`,
     `- no buy smaller than ${RISK.minTradeUsdc} tUSDC`,
+    `- a buy may also take at most ${RISK.maxShareOfPoolDepth * 100}% of the market's pool depth, shown per market below. This one trims rather than refusing, so an oversized proposal still trades - just smaller than you asked, and the log will say so. Sizing to it yourself is better: on a thin pool your own trade is most of the price move you would be reacting to.`,
   ].join("\n");
 
   const user = [

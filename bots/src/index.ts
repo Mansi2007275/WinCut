@@ -33,6 +33,16 @@ const log = (...parts: unknown[]) => console.log(`[${stamp()}]`, ...parts);
 /** One price history per market, because a strategy must not mix two series. */
 const histories = new Map<number, PriceHistory>();
 
+/**
+ * The quote-side depth each pool last reported.
+ *
+ * Kept from the same read that feeds the price series, so capping a trade
+ * against the pool costs no extra RPC call. A market whose depth has not been
+ * read yet caps on balance alone, which is the old behaviour rather than a
+ * guess at a number we do not have.
+ */
+const depths = new Map<number, number>();
+
 const historyFor = (market: MarketConfig): PriceHistory => {
   let h = histories.get(market.poolId);
   if (!h) {
@@ -48,6 +58,7 @@ async function tick(): Promise<void> {
     try {
       const pool = await readPoolFor(market);
       historyFor(market).push(pool.price);
+      depths.set(market.poolId, pool.usdcReserve);
       // The same series the chart reads. Written as a `trade` point only when
       // the bots have actually traded; a plain observation is a sample, which
       // is what it is.
@@ -94,13 +105,20 @@ async function tradersPass(due: typeof BOTS): Promise<void> {
       continue;
     }
     try {
-      const pass = await runBot(bot, market, history, (s) => console.log(`[${stamp()}] ${s}`));
+      const pass = await runBot(
+        bot, market, history, (s) => console.log(`[${stamp()}] ${s}`), depths.get(market.poolId),
+      );
       if (pass.txHash) {
-        // Re-read so the recorded point is the price the trade left behind,
-        // not the one it was decided on.
+        // Re-read so the recorded point is the price the trade left behind
+        // rather than the one it was decided on. Worth one extra call: a trade
+        // point that reports the pre-trade price is the one point in the series
+        // that is actively wrong, and it is the point a chart draws a candle
+        // from. Everything else that could be re-read here is left to the next
+        // tick, which is at most 20 seconds away.
         try {
           const after = await readPoolFor(market);
           history.push(after.price);
+          depths.set(market.poolId, after.usdcReserve);
           await storePoint(market.poolId, after.price, "trade");
         } catch {
           await storePoint(market.poolId, history.last()!, "trade");

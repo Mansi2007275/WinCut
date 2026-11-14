@@ -259,6 +259,22 @@ export const MM_EVERY_MS = Number(optional("MM_EVERY_MS") ?? 60_000);
  */
 export const BOT_RISK = {
   maxShareOfBalancePerTrade: 0.25,
+  /**
+   * The cap that actually matters, and the one that was missing.
+   *
+   * A limit set as a share of the trader's own balance says nothing about the
+   * market it trades in. The agent's cap is 20% of its balance, which was 40
+   * tUSDC - a reasonable size against the 1,000 tUSDC MNEAR pool and 8% of the
+   * depth of a 400 tUSDC memecoin pool. One such buy moved MLONK 20% off its
+   * peg, the maker spent the next several minutes undoing it, and the chart
+   * recorded a spike that was not a price discovery of any kind: it was the
+   * agent trading against itself through a pool too thin to absorb it.
+   *
+   * So size is capped against the pool as well. 1.5% of the quote reserve moves
+   * a constant-product price by about 3%, which is a trade a market can have an
+   * opinion about rather than one that overwrites it.
+   */
+  maxShareOfPoolDepth: 0.015,
   minTradeUsdc: 1,
   /** A bot stops buying below this, so it always has something left to trade. */
   reserveUsdc: 5,

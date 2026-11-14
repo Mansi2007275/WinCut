@@ -14,8 +14,9 @@
  */
 
 import {
-  AGENT_ACCOUNT_ID, CONTRACT_ID, DRY_RUN, LOOP_MS, NETWORK, PRIMARY_MARKET_TOKEN_ID,
-  REF_CONTRACT, RISK, RUN_ONCE, SLIPPAGE_BPS, TIMEFRAME, USDC_DECIMALS, describeConfig,
+  AGENT_ACCOUNT_ID, AGENT_MARKETS, CONTRACT_ID, DRY_RUN, LOOP_MS, NETWORK,
+  PRIMARY_MARKET_TOKEN_ID, REF_CONTRACT, RISK, RUN_ONCE, SLIPPAGE_BPS, TIMEFRAME,
+  USDC_DECIMALS, describeConfig, fmtPrice,
 } from "./config.js";
 import {
   callBuy, callSell, explorerTx, getBalance, getPositions, getTokens, getTradesOf,
@@ -122,14 +123,22 @@ async function pass(): Promise<void> {
   const tokens = await getTokens();
   // The primary market first. The model reads these in order, and a market with
   // real history should not be buried behind six that have none.
+  const allowed = AGENT_MARKETS.length ? new Set(AGENT_MARKETS) : undefined;
   const tradable = tokens
-    .filter((t) => t.registered)
+    .filter((t) => t.registered && (!allowed || allowed.has(t.token_id)))
     .sort((a, b) =>
       a.token_id === PRIMARY_MARKET_TOKEN_ID ? -1 : b.token_id === PRIMARY_MARKET_TOKEN_ID ? 1 : 0,
     );
   if (!tradable.length) {
-    log("no registered markets on the contract - nothing to decide");
+    log(
+      allowed
+        ? `none of the ${AGENT_MARKETS.length} allowed market(s) is registered on the contract`
+        : "no registered markets on the contract - nothing to decide",
+    );
     return;
+  }
+  if (allowed && tokens.length > tradable.length) {
+    log(`${tokens.length - tradable.length} listed market(s) skipped - not in AGENT_MARKETS`);
   }
 
   const [rawBalance, positions, myTrades] = await Promise.all([
@@ -171,7 +180,7 @@ async function pass(): Promise<void> {
   );
   for (const m of markets) {
     log(
-      `  ${m.token.symbol.padEnd(6)} ${m.mid.toFixed(6)}  ` +
+      `  ${m.token.symbol.padEnd(8)} ${fmtPrice(m.mid).padStart(12)}  ` +
       `momentum ${m.momentumPct === undefined ? "n/a" : `${m.momentumPct.toFixed(2)}%`}  ` +
       `${m.candles.length} candle(s)${m.notes.length ? `  [${m.notes.join("; ")}]` : ""}`,
     );
@@ -191,7 +200,11 @@ async function pass(): Promise<void> {
     const thought = await decide(markets, states, balanceUsdc, tradesLast24h);
     if (thought.llmError) log(`  model unavailable, using the fallback: ${thought.llmError}`);
     const knownTokens = new Set(tradable.map((t) => t.token_id));
-    const verdict = vet(thought.proposal, { balanceUsdc, states, tradesLast24h, knownTokens });
+    // The depth each route actually has, from the same reads that priced it.
+    const depthUsdc = new Map(markets.map((m) => [m.token.token_id, m.liquidity]));
+    const verdict = vet(thought.proposal, {
+      balanceUsdc, states, tradesLast24h, knownTokens, depthUsdc,
+    });
     if (verdict.ok) {
       proposal = verdict.proposal;
       decidedBy = thought.decidedBy;
