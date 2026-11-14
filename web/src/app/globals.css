@@ -31,6 +31,20 @@
   --color-loss-dim: #2b1418;
   --color-accent-dim: #11213b;
 
+  /* Two meanings the dashboard needs and the rest of the app does not.
+
+     `fee` is the one accent colour on /dashboard and it means exactly one
+     thing: money the protocol took. Nothing else on that page is allowed to
+     be amber, so a glance at the screen answers "was anything charged?".
+
+     `credit` is a banked loss. It is deliberately a muted blue rather than a
+     second green: a credit is not a gain, it is a gain that has not happened
+     yet. */
+  --color-fee: #f5a524;
+  --color-fee-dim: #2a1f08;
+  --color-credit: #5e86b8;
+  --color-credit-dim: #141d27;
+
   --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system, sans-serif;
 
   --radius-card: 12px;
@@ -76,6 +90,26 @@
   .num {
     font-variant-numeric: tabular-nums;
     letter-spacing: -0.01em;
+  }
+
+  /* The dashboard sets every figure in a real monospace, not just tabular
+     sans: it is a terminal, and a terminal's columns line up because the
+     glyphs are the same width, not because the digits are. */
+  .mono {
+    font-family: ui-monospace, "SFMono-Regular", "SF Mono", Menlo, Consolas,
+      "Liberation Mono", monospace;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.02em;
+  }
+
+  /* A 1px rule grid, as the page background. Two linear gradients rather than
+     an SVG so it costs nothing and scales with the zoom level. */
+  .field-grid {
+    background-image:
+      linear-gradient(to right, var(--color-border) 1px, transparent 1px),
+      linear-gradient(to bottom, var(--color-border) 1px, transparent 1px);
+    background-size: 48px 48px;
+    background-position: center center;
   }
 
   /* Kept as an alias: `.money` is referenced from several screens and means the

@@ -24,7 +24,9 @@ import type { TokenConfig } from "./contract";
 import * as agentLib from "./agent";
 import * as gecko from "./gecko";
 import * as rhea from "./rhea";
+import { toNumber } from "./format";
 import {
+  CONTRACT_ID,
   TOKEN_IDS,
   USDC_DECIMALS,
   USDC_ID,
@@ -615,6 +617,91 @@ export function useActivity(tokenId: string | undefined, poolKey: string | undef
     },
     enabled: enabled && !!tokenId && isDeployed,
     refetchInterval: POLL.stats,
+    retry: 1,
+  });
+}
+
+// ------------------------------------------------------------- the cut field
+
+/**
+ * Current banked loss credit for several accounts at once.
+ *
+ * The ring says how much credit each loss *banked*; only the contract knows
+ * how much is still *held*, because a later win spends it. One query so the
+ * dashboard makes a handful of parallel view calls rather than mounting a
+ * hook per account, and so the whole panel has one loading state.
+ */
+export function useLossCredits(accountIds: string[]) {
+  const key = [...accountIds].sort().join(",");
+  return useQuery<Record<string, number>>({
+    queryKey: ["loss-credits", key],
+    queryFn: async ({ signal }) => {
+      const entries = await Promise.all(
+        accountIds.map(async (id) => {
+          try {
+            const raw = await contract.getLossCredit(id, signal);
+            return [id, toNumber(raw, USDC_DECIMALS)] as const;
+          } catch {
+            // One unreadable account must not blank the panel.
+            return [id, NaN] as const;
+          }
+        }),
+      );
+      return Object.fromEntries(entries);
+    },
+    enabled: isDeployed && accountIds.length > 0,
+    refetchInterval: POLL.trades,
+    retry: 1,
+  });
+}
+
+/** What the contract holds against what it owes: the solvency row. */
+export function useSolvency() {
+  return useQuery({
+    queryKey: ["solvency"],
+    queryFn: async ({ signal }) => {
+      const accounted = await contract.getUsdcAccounted(signal);
+      return toNumber(accounted, USDC_DECIMALS);
+    },
+    enabled: isDeployed,
+    refetchInterval: 30_000,
+    retry: 1,
+  });
+}
+
+/**
+ * The whole trade ring, on the dashboard's own cadence.
+ *
+ * Separate from `useRecentTrades` because the two want different things: a
+ * feed wants the newest few often, and the dashboard wants all 500 less
+ * often. Sharing one hook would have meant re-reading the entire ring every
+ * eight seconds for every viewer of a public page.
+ */
+export function useTradeRing(limit = 500) {
+  return useQuery({
+    queryKey: ["trade-ring", limit],
+    queryFn: ({ signal }) => contract.getRecentTrades(0, limit, signal),
+    enabled: isDeployed,
+    refetchInterval: 15_000,
+    retry: 1,
+  });
+}
+
+/**
+ * The USDC the contract actually holds, asked of the token rather than of the
+ * contract. Paired with `useSolvency`, which asks the contract what it thinks
+ * it owes: two independent reads, and the comparison is only worth anything
+ * because they come from different places.
+ */
+export function useContractUsdcHeld() {
+  return useQuery({
+    queryKey: ["contract-usdc-held"],
+    queryFn: async ({ signal }) => {
+      const raw = await ftBalanceOf(USDC_ID, CONTRACT_ID, signal);
+      return toNumber(raw, USDC_DECIMALS);
+    },
+    enabled: isDeployed,
+    refetchInterval: 30_000,
     retry: 1,
   });
 }

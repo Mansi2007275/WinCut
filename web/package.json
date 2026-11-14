@@ -16,12 +16,15 @@
     "@near-wallet-selector/modal-ui": "^10.1.4",
     "@near-wallet-selector/my-near-wallet": "^10.1.4",
     "@number-flow/react": "^0.6.2",
+    "@react-three/fiber": "^9.0.4",
     "@tanstack/react-query": "^5.106.1",
+    "@types/three": "^0.172.0",
     "framer-motion": "^14.10.1",
     "lightweight-charts": "^5.2.1",
     "next": "^15.5.29",
     "react": "19.1.0",
-    "react-dom": "19.1.0"
+    "react-dom": "19.1.0",
+    "three": "^0.172.0"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",
