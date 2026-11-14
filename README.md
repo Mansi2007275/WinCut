@@ -2,7 +2,11 @@
 
 **Every trading app gets paid when you lose. WinCut doesn't.**
 
-Live: **https://wincut.vercel.app** (NEAR testnet) · Demo video: _`<2-min walkthrough — link pending>`_
+Live: **https://wincut.vercel.app** (NEAR testnet) 
+
+https://github.com/user-attachments/assets/f7086ecc-34a4-4763-8866-216fff53006d
+
+
 
 Binance and Bybit already pay lead traders only on profit. But the exchange still charges you on
 every trade, win or lose. WinCut takes the rule all the way down the stack: the platform, the
