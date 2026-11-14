@@ -28,6 +28,7 @@ import {
   USDC_DECIMALS, USDC_ID,
 } from "./config.js";
 import { readPeg, readPool, tradeToReachPrice } from "./peg.js";
+import { storeSwap } from "./store.js";
 
 const toRaw = (human: number, decimals: number): bigint => {
   const [w, f = ""] = human.toFixed(decimals).split(".");
@@ -115,6 +116,17 @@ export async function runMaker(log: (s: string) => void): Promise<MakerResult> {
 
   const txHash = await refSwap(account, REF_CONTRACT, tokenIn, amountIn, MIRROR_POOL_ID, tokenOut, minOut);
   log(`  swapped: ${explorerTx(txHash)}`);
+
+  // Notional in quote units, whichever way round the swap went, so the
+  // activity panel can count volume the WinCut trade log never sees.
+  const notional = buyingToken
+    ? Number(amountIn) / 10 ** USDC_DECIMALS
+    : Number(expected) / 10 ** USDC_DECIMALS;
+  await storeSwap(MIRROR_POOL_ID, {
+    t: Date.now(),
+    usdc: notional,
+    side: buyingToken ? "buy" : "sell",
+  });
 
   // Rhea credits the output to its own internal balance; pull it back so the
   // maker's inventory is visible on chain and usable next pass.

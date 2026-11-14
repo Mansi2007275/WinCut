@@ -8,6 +8,7 @@ import { Page } from "@/components/Shell";
 import { StatsBar } from "@/components/StatsBar";
 import { PriceChart } from "@/components/PriceChart";
 import { MIRROR_MARKET_NOTE, MIRROR_MARKET_WHY, isMirrorMarket } from "@/lib/bots";
+import { useActivity } from "@/lib/queries";
 import { DepthPanel } from "@/components/DepthPanel";
 import { OrderPanel } from "@/components/OrderPanel";
 import { TradeTabs } from "@/components/TradeTabs";
@@ -65,6 +66,7 @@ function TradeScreen({ tokenId }: { tokenId: string }) {
   const seriesPool = seriesPoolFor(token);
   const gtCandles = useCandles(token?.chart_pool, timeframe, stats.data?.side);
   const onChain = useOnChainCandles(seriesPool, timeframe, !CHARTS_AVAILABLE);
+  const activity = useActivity(token?.token_id, seriesPool, !CHARTS_AVAILABLE);
   const candles = CHARTS_AVAILABLE ? gtCandles : onChain;
   const candleData = CHARTS_AVAILABLE ? gtCandles.data : onChain.data?.candles;
 
@@ -135,6 +137,7 @@ function TradeScreen({ tokenId }: { tokenId: string }) {
         route={route.data}
         stats={stats.data}
         statsError={stats.isError}
+        activity={activity.data}
       />
 
       {isMirrorMarket(token.token_id) && (
@@ -168,6 +171,7 @@ function TradeScreen({ tokenId }: { tokenId: string }) {
 
         <div className="min-w-0">
           <DepthPanel
+            activity={activity.data}
             route={route.data}
             trades={poolTrades.data}
             tokenSymbol={token.symbol}

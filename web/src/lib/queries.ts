@@ -582,3 +582,39 @@ export function useAgentLog(enabled = true, limit = 40) {
     retry: 1,
   });
 }
+
+/**
+ * 24h volume and pressure for one market, computed from what settled rather
+ * than from an indexer. Used on testnet, where nothing indexes the pool but
+ * WinCut knows exactly what traded through it.
+ */
+export type Activity = {
+  volume24hUsd: number;
+  buys: number;
+  sells: number;
+  buyPct: number | null;
+  count: number;
+  wincutCount: number;
+  makerCount: number;
+  makerVolume: number;
+  sources: string[];
+  truncated: boolean;
+  source: string;
+};
+
+export function useActivity(tokenId: string | undefined, poolKey: string | undefined, enabled: boolean) {
+  return useQuery<Activity>({
+    queryKey: ["activity", tokenId, poolKey],
+    queryFn: async ({ signal }) => {
+      const qs = new URLSearchParams({ token: tokenId! });
+      if (poolKey) qs.set("pool", poolKey);
+      const res = await fetch(`/api/activity?${qs}`, { signal, cache: "no-store" });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body?.detail ?? body?.error ?? `activity responded ${res.status}`);
+      return body as Activity;
+    },
+    enabled: enabled && !!tokenId && isDeployed,
+    refetchInterval: POLL.stats,
+    retry: 1,
+  });
+}

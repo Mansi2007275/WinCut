@@ -36,3 +36,34 @@ export async function storePoint(
     // A missed point is a gap in the chart, not a reason to stop trading.
   }
 }
+
+/**
+ * The maker's swaps, which WinCut's own trade log cannot see.
+ *
+ * The maker trades on Rhea directly, so its volume never reaches the contract's
+ * trade ring - and a 24h volume figure that silently omitted it would be
+ * understating the pool's real activity. Stored with the notional in quote
+ * units and the direction, so the activity panel can add them to the WinCut
+ * trades and say that it did.
+ */
+export async function storeSwap(
+  poolId: number | string,
+  swap: { t: number; usdc: number; side: "buy" | "sell" },
+): Promise<void> {
+  if (!storeConfigured) return;
+  if (!(swap.usdc > 0) || !Number.isFinite(swap.usdc)) return;
+  try {
+    const res = await fetch(`${UPSTASH_URL}/pipeline`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${UPSTASH_TOKEN}`, "content-type": "application/json" },
+      body: JSON.stringify([
+        ["ZADD", `wincut:mm:${poolId}`, String(swap.t), `${swap.t}|${swap.usdc}|${swap.side}`],
+        // A rolling fortnight is plenty for a 24h figure and keeps the set small.
+        ["ZREMRANGEBYSCORE", `wincut:mm:${poolId}`, "-inf", String(swap.t - 14 * 86_400_000)],
+      ]),
+    });
+    if (!res.ok) throw new Error(`upstash ${res.status}`);
+  } catch {
+    // A missed record understates volume slightly; it is not worth stopping for.
+  }
+}
