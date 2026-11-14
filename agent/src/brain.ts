@@ -13,7 +13,7 @@
  * `risk.ts` decides whether it becomes a transaction.
  */
 
-import { FALLBACK, LLM_API_KEY, LLM_BASE_URL, LLM_MODEL, RISK } from "./config.js";
+import { FALLBACK, LLM_API_KEY, LLM_BASE_URL, LLM_MODEL, RISK, fmtPrice } from "./config.js";
 import type { MarketView } from "./market.js";
 import type { PositionState, Proposal } from "./risk.js";
 
@@ -23,13 +23,42 @@ export type Thought = { proposal: Proposal; decidedBy: Brain; raw?: string };
 const num = (v: number | undefined, digits = 4): string =>
   v === undefined ? "unknown" : v.toFixed(digits);
 
+const signed = (v: number): string => `${v >= 0 ? "+" : ""}${v.toFixed(2)}%`;
+
+/**
+ * Close-to-close moves over the recent candles, as percentages.
+ *
+ * The model was told `price 0.000000` for MDRAGON and MLONK and concluded,
+ * reasonably, that their trends could not be read. The price field was the
+ * problem - `toFixed(6)` on 5.5e-9 is six zeros - but fixing only the
+ * formatting would leave the model doing arithmetic on numbers like 5.54070e-9
+ * to work out whether a market moved, which is a question it should never have
+ * to ask in absolute units at all.
+ *
+ * So the moves are given directly. A percentage is the same size of number for
+ * a token worth three dollars and one worth five billionths of one, which is
+ * exactly the property wanted here: the scale of the price stops being
+ * something the model has to reason around.
+ */
+export function candleMoves(candles: { close: number }[], n = 6): string {
+  if (candles.length < 2) return "not enough closes to compare";
+  const tail = candles.slice(-(n + 1));
+  const out: string[] = [];
+  for (let i = 1; i < tail.length; i++) {
+    const prev = tail[i - 1]!.close;
+    const now = tail[i]!.close;
+    out.push(prev > 0 ? signed(((now - prev) / prev) * 100) : "n/a");
+  }
+  return out.join(" ");
+}
+
 /**
  * The prompt states the limits so a proposal has a chance of being accepted,
  * but it says plainly that applying them is not the model's job. That is the
  * honest description of the system; misleading the model about who holds the
  * brake would only make its reasoning worse.
  */
-function buildPrompt(
+export function buildPrompt(
   markets: MarketView[],
   states: PositionState[],
   balanceUsdc: number,
@@ -37,23 +66,26 @@ function buildPrompt(
 ) {
   const marketLines = markets.map(
     (m) =>
-      `- ${m.token.symbol} (${m.token.token_id}): price ${num(m.mid, 6)}, pool depth ${num(m.liquidity, 2)} tUSDC, ` +
+      `- ${m.token.symbol} (${m.token.token_id}): price ${fmtPrice(m.mid)}, ` +
+      `pool depth ${num(m.liquidity, 2)} tUSDC, ` +
       `window change ${num(m.changePct, 2)}%, momentum ${num(m.momentumPct, 2)}%, ` +
-      `${m.candles.length} candle(s)` +
+      `last moves ${candleMoves(m.candles)}, ${m.candles.length} candle(s)` +
       (m.notes.length ? ` [${m.notes.join("; ")}]` : ""),
   );
 
   const positionLines = states.length
     ? states.map(
         (s) =>
-          `- ${s.position.symbol}: ${num(Number(s.position.amount) / 10 ** s.position.decimals, 6)} held, ` +
-          `entry ${num(s.entry, 6)}, now ${num(s.mid, 6)}, unrealised ${num(s.unrealisedPct, 2)}%`,
+          `- ${s.position.symbol}: ${(Number(s.position.amount) / 10 ** s.position.decimals)
+            .toLocaleString("en-US", { maximumFractionDigits: 6 })} held, ` +
+          `entry ${fmtPrice(s.entry)}, now ${fmtPrice(s.mid)}, unrealised ${num(s.unrealisedPct, 2)}%`,
       )
     : ["- none"];
 
   const system = [
     "You are the trading brain of WinCut, an on-chain trader on NEAR.",
     "You see only real data read from the chain. If a field says unknown, it is genuinely unavailable - do not guess what it might be, and prefer HOLD when the inputs are too thin to read a trend.",
+    "Some of these markets mirror memecoins and trade near 0.000000005 per token. A price written as 5.54070e-9 is a real, readable price, not a missing one. Judge every market by its percentages - window change, momentum, and the close-to-close moves - which are the same size of number whatever the token is worth. Sizes you propose are always in tUSDC, never in tokens.",
     "Answer with one JSON object and nothing else:",
     '{"action":"BUY"|"SELL"|"HOLD","token_id":string|null,"size_usdc":number|null,"sell_fraction":number|null,"reason":string}',
     "reason is one or two sentences a human will read on a public page. Name the numbers you acted on.",
