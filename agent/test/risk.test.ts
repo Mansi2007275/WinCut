@@ -1,5 +1,7 @@
 import { RISK } from "../src/config.js";
-import { forcedExit, positionState, vet, type PositionState } from "../src/risk.js";
+import {
+  countRecentTrades, forcedExit, positionState, vet, type PositionState,
+} from "../src/risk.js";
 import type { PositionView } from "../src/chain.js";
 
 const pos = (symbol: string, amount: string, basis: string): PositionView => ({
@@ -74,7 +76,10 @@ three[0]!.position.token_id = "a.testnet";
 three[1]!.position.token_id = "b.testnet";
 three[2]!.position.token_id = "c.testnet";
 check("a 4th position is refused", !vet({ action: "BUY", tokenId: "d.testnet", sizeUsdc: 5, reason: "t" }, { ...base, states: three }).ok);
-check("adding to one of the 3 held is allowed", vet({ action: "BUY", tokenId: "a.testnet", sizeUsdc: 5, reason: "t" }, { ...base, states: three }).ok);
+// This used to be allowed, and that is what let the agent buy MDRAGON five
+// times in a row: each buy was a repeat rather than a new position, so the
+// position cap never saw it. One position per market now - see below.
+check("adding to one of the 3 held is refused", !vet({ action: "BUY", tokenId: "a.testnet", sizeUsdc: 5, reason: "t" }, { ...base, states: three }).ok);
 check("the daily cap is refused", !buy(5, { tradesLast24h: RISK.maxTradesPerDay }).ok);
 check("one under the daily cap is allowed", buy(5, { tradesLast24h: RISK.maxTradesPerDay - 1 }).ok);
 
@@ -141,6 +146,106 @@ check("selling what is not held is refused", !vet({ action: "SELL", tokenId: "b.
 check("a fraction above 1 is refused", !vet({ action: "SELL", tokenId: "a.testnet", sellFraction: 1.5, reason: "t" }, held).ok);
 check("a zero fraction is refused", !vet({ action: "SELL", tokenId: "a.testnet", sellFraction: 0, reason: "t" }, held).ok);
 check("a sell past the daily cap is refused", !vet({ action: "SELL", tokenId: "a.testnet", sellFraction: 1, reason: "t" }, { ...held, tradesLast24h: RISK.maxTradesPerDay }).ok);
+
+console.log("one position per market");
+
+// A position in a.testnet, priced, the way a live pass would hand it over.
+const inA = () => {
+  const s = one("A", 100);
+  s.position.token_id = "a.testnet";
+  return s;
+};
+
+check("a buy in a market already held is refused", (() => {
+  const v = vet(
+    { action: "BUY", tokenId: "a.testnet", sizeUsdc: 20, reason: "t" },
+    { ...base, states: [inA()] },
+  );
+  return !v.ok;
+})());
+
+check("the refusal names the market rather than the cap", (() => {
+  const v = vet(
+    { action: "BUY", tokenId: "a.testnet", sizeUsdc: 20, reason: "t" },
+    { ...base, states: [inA()] },
+  );
+  return !v.ok && /Already holding A/.test(v.reason) && /one position per market/.test(v.reason);
+})());
+
+check("a buy in a different market is still allowed", (() => {
+  const v = vet(
+    { action: "BUY", tokenId: "b.testnet", sizeUsdc: 20, reason: "t" },
+    { ...base, states: [inA()] },
+  );
+  return v.ok;
+})());
+
+check("a position the agent could not price still closes its market", (() => {
+  // No state at all for a.testnet - its pool would not quote this pass - but
+  // the chain says the position is open, so the market stays shut.
+  const v = vet(
+    { action: "BUY", tokenId: "a.testnet", sizeUsdc: 20, reason: "t" },
+    { ...base, states: [], openPositions: [pos("A", (10n ** 24n).toString(), "1000000")] },
+  );
+  return !v.ok && /Already holding/.test(v.reason);
+})());
+
+check("an unpriced position counts against the position cap", (() => {
+  const three = ["x", "y", "z"].map((n) => {
+    const p = pos(n.toUpperCase(), (10n ** 24n).toString(), "1000000");
+    p.token_id = `${n}.testnet`;
+    return p;
+  });
+  const v = vet(
+    { action: "BUY", tokenId: "a.testnet", sizeUsdc: 20, reason: "t" },
+    { ...base, states: [], openPositions: three },
+  );
+  return !v.ok && new RegExp(`limit is ${RISK.maxOpenPositions}`).test(v.reason);
+})());
+
+check(`a ${RISK.maxOpenPositions + 1}th market is refused`, (() => {
+  const states = ["b", "c", "d"].map((n) => {
+    const s = one(n.toUpperCase(), 100);
+    s.position.token_id = `${n}.testnet`;
+    return s;
+  });
+  return !vet({ action: "BUY", tokenId: "a.testnet", sizeUsdc: 20, reason: "t" }, { ...base, states }).ok;
+})());
+
+console.log("the 24-hour trade count, from the chain's own field");
+
+const ago = (hours: number) => String(BigInt(Date.now() - hours * 3_600_000) * 1_000_000n);
+
+check("the contract's `timestamp` field is what is read", (() => {
+  // The whole bug: this function read `timestamp_ns`, which this contract has
+  // never returned, so every count came back 0 and the daily limit was never
+  // once enforced.
+  return countRecentTrades([{ timestamp: ago(1) }, { timestamp: ago(2) }]) === 2;
+})());
+
+check("trades older than 24 hours are not counted", (() => {
+  return countRecentTrades([{ timestamp: ago(1) }, { timestamp: ago(25) }]) === 1;
+})());
+
+check("a number timestamp counts the same as a string one", (() => {
+  return countRecentTrades([{ timestamp: Number(ago(1)) }]) === 1;
+})());
+
+check("a `timestamp_ns` row is still counted, in case anything emits one", (() => {
+  return countRecentTrades([{ timestamp_ns: ago(1) }]) === 1;
+})());
+
+check("a row with no usable timestamp is not counted", (() => {
+  return countRecentTrades([{ timestamp: undefined }, { timestamp: "" }, { timestamp: "oops" }]) === 0;
+})());
+
+check("a full day's worth of real trades reaches the cap", (() => {
+  const trades = Array.from({ length: RISK.maxTradesPerDay }, (_, i) => ({ timestamp: ago(i % 20) }));
+  const count = countRecentTrades(trades);
+  return count === RISK.maxTradesPerDay &&
+    !vet({ action: "BUY", tokenId: "a.testnet", sizeUsdc: 20, reason: "t" },
+      { ...base, tradesLast24h: count }).ok;
+})());
 
 console.log("hold");
 check("HOLD always passes", vet({ action: "HOLD", reason: "t" }, base).ok);

@@ -108,6 +108,16 @@ function DecisionRow({ decision }: { decision: AgentDecision }) {
         </p>
       )}
 
+      {decision.note && (
+        // The trade worked and the RPC said otherwise. Neither half is hidden:
+        // the entry is not marked failed, and the trouble is still on record.
+        <p className="mt-1 text-[11px] leading-relaxed text-secondary">{decision.note}</p>
+      )}
+
+      {decision.llmStatus && (
+        <p className="mt-1 text-[11px] leading-relaxed text-secondary">{decision.llmStatus}</p>
+      )}
+
       {decision.txHash && (
         <a
           href={explorerTx(decision.txHash)}

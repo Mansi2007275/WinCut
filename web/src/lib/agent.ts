@@ -43,7 +43,20 @@ export type AgentDecision = {
     tradesLast24h: number;
   };
   txHash?: string;
+  /**
+   * Set only when the chain confirms the trade failed, or it never landed.
+   *
+   * Not set because an RPC call errored. The agent looks every transaction it
+   * sends up on chain before deciding what to call it, because this line used
+   * to read "the transaction failed: Internal server error" beside trades that
+   * had settled - the provider had failed to describe a transaction it had
+   * already executed.
+   */
   error?: string;
+  /** The broadcast reported trouble that the chain then contradicted. */
+  note?: string;
+  /** Said once per pass when the model could not be reached. */
+  llmStatus?: string;
   dryRun: boolean;
 };
 

@@ -19,15 +19,17 @@ import {
   USDC_DECIMALS, VIEW_CACHE_MS, describeConfig, fmtPrice,
 } from "./config.js";
 import {
-  callBuy, callSell, explorerTx, getBalance, getPositions, getTokens, getTradesOf,
-  quoteRoute, reverseHops, rpcReport, type TokenConfig,
+  callBuy, callSell, confirmTx, explorerTx, getBalance, getMyTrades, getOpenPositions,
+  getTokens, quoteRoute, reverseHops, rpcReport, type PositionView, type SendResult,
+  type TokenConfig,
 } from "./chain.js";
 import { readMarket, type MarketView } from "./market.js";
-import { decide } from "./brain.js";
+import { decide, describeLlmFailure } from "./brain.js";
 import {
   countRecentTrades, forcedExit, positionState, toUnits, vet,
   type PositionState, type Proposal,
 } from "./risk.js";
+import { settleTrade, type Settlement } from "./settle.js";
 import { record, storeConfigured, type DecisionEntry, type DecisionInputs } from "./store.js";
 
 const log = (...parts: unknown[]) => console.log(`[${new Date().toISOString()}]`, ...parts);
@@ -42,21 +44,34 @@ const toRaw = (human: number, decimals: number): bigint => {
 const applySlippage = (amount: bigint): bigint =>
   (amount * BigInt(10_000 - SLIPPAGE_BPS)) / 10_000n;
 
+/**
+ * What the agent saw, for the log and for the page.
+ *
+ * Every open position appears, including ones that could not be priced: the
+ * page prints this list as "what it was holding", and a position missing from
+ * it because its pool would not quote is a position the page denies exists.
+ * An unpriced one shows its entry and a zero mid rather than being dropped.
+ */
 function summariseInputs(
   balanceUsdc: number,
   states: PositionState[],
   markets: MarketView[],
   tradesLast24h: number,
+  openPositions: PositionView[],
 ): DecisionInputs {
+  const priced = new Map(states.map((s) => [s.position.token_id, s]));
   return {
     balanceUsdc,
-    openPositions: states.map((s) => ({
-      symbol: s.position.symbol,
-      amount: toUnits(s.position.amount, s.position.decimals),
-      entry: s.entry,
-      mid: s.mid,
-      pnlPct: s.unrealisedPct,
-    })),
+    openPositions: openPositions.map((p) => {
+      const s = priced.get(p.token_id);
+      return {
+        symbol: p.symbol,
+        amount: toUnits(p.amount, p.decimals),
+        entry: s?.entry ?? 0,
+        mid: s?.mid ?? 0,
+        pnlPct: s?.unrealisedPct ?? 0,
+      };
+    }),
     markets: markets.map((m) => ({
       symbol: m.token.symbol,
       tokenId: m.token.token_id,
@@ -71,11 +86,22 @@ function summariseInputs(
   };
 }
 
+/**
+ * Place the trade, then ask the chain what became of it.
+ *
+ * Everything before the signature can fail locally and is reported as an
+ * error here - a quote that will not price, a sell that resolves to zero. Once
+ * the key has signed, the answer stops being ours to decide: `settleTrade`
+ * takes the hash and the chain's verdict, and a broadcast that errored is no
+ * longer enough on its own to call a trade failed.
+ */
 async function execute(
   proposal: Proposal,
   token: TokenConfig,
   states: PositionState[],
-): Promise<{ txHash?: string; error?: string }> {
+): Promise<Settlement> {
+  let send: (() => Promise<SendResult>) | undefined;
+
   try {
     if (proposal.action === "BUY") {
       const usdcIn = toRaw(proposal.sizeUsdc!, USDC_DECIMALS);
@@ -87,35 +113,67 @@ async function execute(
         `min ${toUnits(minOut.toString(), token.decimals).toFixed(6)}`,
       );
       if (DRY_RUN) return {};
-      const hash = await callBuy({
-        token_id: token.token_id,
-        usdc_in: usdcIn.toString(),
-        min_out: minOut.toString(),
-      });
-      return { txHash: hash };
+      send = () =>
+        callBuy({
+          token_id: token.token_id,
+          usdc_in: usdcIn.toString(),
+          min_out: minOut.toString(),
+        });
+    } else {
+      const held = states.find((s) => s.position.token_id === proposal.tokenId)!;
+      const whole = BigInt(held.position.amount);
+      const amount = (whole * BigInt(Math.round((proposal.sellFraction ?? 1) * 10_000))) / 10_000n;
+      if (amount <= 0n) return { error: "sell resolved to zero tokens" };
+      const expected = await quoteRoute(REF_CONTRACT, reverseHops(token.hops), amount);
+      const minOut = applySlippage(expected);
+      log(
+        `  sell ${toUnits(amount.toString(), token.decimals).toFixed(6)} ${token.symbol}, ` +
+        `expecting ${toUnits(expected.toString(), USDC_DECIMALS).toFixed(2)} tUSDC, ` +
+        `min ${toUnits(minOut.toString(), USDC_DECIMALS).toFixed(2)}`,
+      );
+      if (DRY_RUN) return {};
+      send = () =>
+        callSell({
+          token_id: token.token_id,
+          amount: amount.toString(),
+          min_out_usdc: minOut.toString(),
+        });
     }
-
-    // SELL
-    const held = states.find((s) => s.position.token_id === proposal.tokenId)!;
-    const whole = BigInt(held.position.amount);
-    const amount = (whole * BigInt(Math.round((proposal.sellFraction ?? 1) * 10_000))) / 10_000n;
-    if (amount <= 0n) return { error: "sell resolved to zero tokens" };
-    const expected = await quoteRoute(REF_CONTRACT, reverseHops(token.hops), amount);
-    const minOut = applySlippage(expected);
-    log(
-      `  sell ${toUnits(amount.toString(), token.decimals).toFixed(6)} ${token.symbol}, ` +
-      `expecting ${toUnits(expected.toString(), USDC_DECIMALS).toFixed(2)} tUSDC, ` +
-      `min ${toUnits(minOut.toString(), USDC_DECIMALS).toFixed(2)}`,
-    );
-    if (DRY_RUN) return {};
-    const hash = await callSell({
-      token_id: token.token_id,
-      amount: amount.toString(),
-      min_out_usdc: minOut.toString(),
-    });
-    return { txHash: hash };
   } catch (e) {
+    // Nothing was signed, so there is nothing to look up.
     return { error: (e as Error).message };
+  }
+
+  return settleTrade(send, (hash) => confirmTx(hash));
+}
+
+/**
+ * Re-read the account after a confirmed trade.
+ *
+ * Best effort on purpose: the trade is already on chain and already recorded,
+ * so a read that fails here must not turn a settled trade into an error. It
+ * only means the entry keeps the pre-trade numbers, which is why the failure
+ * is said out loud.
+ */
+async function refreshAfterTrade(entry: DecisionEntry, markets: MarketView[]): Promise<void> {
+  try {
+    const [rawBalance, positions, trades] = await Promise.all([
+      getBalance(), getOpenPositions(), getMyTrades(),
+    ]);
+    const states = positions
+      .map((p: PositionView) =>
+        positionState(p, markets.find((m) => m.token.token_id === p.token_id)?.mid ?? 0),
+      )
+      .filter((s: PositionState) => s.mid > 0);
+    entry.inputs = summariseInputs(
+      toUnits(rawBalance, USDC_DECIMALS), states, markets, countRecentTrades(trades), positions,
+    );
+    log(
+      `  now ${positions.length} position(s) · ` +
+      `${entry.inputs.tradesLast24h}/${RISK.maxTradesPerDay} trades in 24h, from chain`,
+    );
+  } catch (e) {
+    log(`  traded, but could not re-read the account afterwards: ${(e as Error).message}`);
   }
 }
 
@@ -141,10 +199,20 @@ async function pass(): Promise<void> {
     log(`${tokens.length - tradable.length} listed market(s) skipped - not in AGENT_MARKETS`);
   }
 
+  // The account, as the chain has it. Positions and the daily trade count are
+  // read here every pass and nowhere else: neither is remembered between
+  // passes, so a restart, a crash or a trade made by something other than this
+  // process cannot leave the agent trading against a stale picture of itself.
+  //
+  // `getMyTrades` throws rather than returning an empty list when it cannot
+  // read. It used to be wrapped in a catch that swallowed the failure, which
+  // made an unreachable endpoint indistinguishable from an account that had
+  // never traded - and the difference between those two is the whole daily
+  // limit.
   const [rawBalance, positions, myTrades] = await Promise.all([
     getBalance(),
-    getPositions(),
-    getTradesOf().catch(() => [] as { timestamp_ns: string }[]),
+    getOpenPositions(),
+    getMyTrades(),
   ]);
   const balanceUsdc = toUnits(rawBalance, USDC_DECIMALS);
   const tradesLast24h = countRecentTrades(myTrades);
@@ -163,15 +231,25 @@ async function pass(): Promise<void> {
     return;
   }
 
+  // A position the agent could not price this pass has no state - no entry, no
+  // unrealised percentage, nothing to reason about. It is still a position,
+  // so it still counts against the position cap and still closes its market to
+  // new buys; `states` is what the model reads, `positions` is what the limits
+  // are checked against, and conflating the two is how the page came to say
+  // "1 position" while the chain held more.
   const states = positions
-    .filter((p) => BigInt(p.amount) > 0n)
-    .map((p) => {
+    .map((p: PositionView) => {
       const m = markets.find((x) => x.token.token_id === p.token_id);
       return positionState(p, m?.mid ?? 0);
     })
-    .filter((s) => s.mid > 0);
+    .filter((s: PositionState) => s.mid > 0);
 
-  const inputs = summariseInputs(balanceUsdc, states, markets, tradesLast24h);
+  const unpriced = positions.length - states.length;
+  if (unpriced > 0) {
+    log(`  ${unpriced} open position(s) could not be priced this pass - still counted as open`);
+  }
+
+  const inputs = summariseInputs(balanceUsdc, states, markets, tradesLast24h, positions);
 
   log(
     `balance ${balanceUsdc.toFixed(2)} tUSDC · ${states.length} position(s) · ` +
@@ -192,18 +270,25 @@ async function pass(): Promise<void> {
   let decidedBy: DecisionEntry["decidedBy"];
   let vetoed: DecisionEntry["vetoed"];
 
+  let llmStatus: string | undefined;
+
   if (forced) {
     proposal = forced;
     decidedBy = "forced-exit";
     log(`forced exit: ${forced.reason}`);
   } else {
     const thought = await decide(markets, states, balanceUsdc, tradesLast24h);
-    if (thought.llmError) log(`  model unavailable, using the fallback: ${thought.llmError}`);
+    // One line, once a pass, naming the real reason - rather than a parenthesis
+    // about the vendor's billing stapled to every trade the fallback decides.
+    if (thought.llmFailure) {
+      llmStatus = describeLlmFailure(thought.llmFailure);
+      log(`  ${llmStatus}`);
+    }
     const knownTokens = new Set(tradable.map((t) => t.token_id));
     // The depth each route actually has, from the same reads that priced it.
     const depthUsdc = new Map(markets.map((m) => [m.token.token_id, m.liquidity]));
     const verdict = vet(thought.proposal, {
-      balanceUsdc, states, tradesLast24h, knownTokens, depthUsdc,
+      balanceUsdc, states, tradesLast24h, knownTokens, depthUsdc, openPositions: positions,
     });
     if (verdict.ok) {
       proposal = verdict.proposal;
@@ -229,6 +314,7 @@ async function pass(): Promise<void> {
     decidedBy,
     vetoed,
     inputs,
+    llmStatus,
     dryRun: DRY_RUN,
   };
 
@@ -237,7 +323,14 @@ async function pass(): Promise<void> {
     const result = await execute(proposal, token, states);
     if (result.txHash) {
       entry.txHash = result.txHash;
-      log(`  sent: ${explorerTx(result.txHash)}`);
+      entry.note = result.note;
+      log(`  done: ${explorerTx(result.txHash)}`);
+      if (result.note) log(`  ${result.note}`);
+      // The position and the count the log carries are the ones from before
+      // the trade. Re-reading them costs two calls and makes the newest entry
+      // on the page describe the account as it is now rather than as it was a
+      // few seconds before it traded.
+      await refreshAfterTrade(entry, markets);
     } else if (result.error) {
       entry.error = result.error;
       log(`  failed: ${result.error}`);

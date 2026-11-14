@@ -10,6 +10,8 @@
  * whether that proposal becomes a transaction.
  */
 
+import { withoutRefusedRpc } from "./rpc.js";
+
 export type Network = "testnet" | "mainnet";
 
 const env = (k: string, fallback?: string): string => {
@@ -29,36 +31,46 @@ export const NETWORK = (optional("NEAR_NETWORK") ?? "testnet") as Network;
 /**
  * The endpoints, in the order they are tried.
  *
- * Three that were verified to answer a real testnet view call: dRPC and
- * FastNEAR both respond in about 350ms, rpc.testnet.near.org in about 3s.
- * `neart.lava.build` is absent because it is discontinued and answers 410.
+ * dRPC leads and rpc.testnet.near.org backs it up. FastNEAR used to sit
+ * between them and is now refused outright, in `rpc.ts`, whatever the
+ * environment says: its free testnet tier answered a steady fraction of this
+ * agent's reads with 429, and because a 429 is a failover rather than a
+ * failure, the cost of it was invisible except as passes that took longer and
+ * occasionally gave up. An endpoint that rate-limits us reliably is not a
+ * fallback, it is a round trip spent learning the same thing again.
  *
- * The agent leads with dRPC while the bots lead with FastNEAR. Both fall back
- * to the other two, so neither process depends on one provider - but on a
- * normal pass they are drawing on different free tiers instead of queuing in
- * the same bucket, which is what started returning 429 once four markets
- * quadrupled the read traffic.
+ * Two endpoints is enough for the agent: it reads a handful of views a pass,
+ * five minutes apart, and the cache collapses the repeats inside one.
  */
 const DEFAULT_RPCS =
   NETWORK === "mainnet"
-    ? ["https://free.rpc.fastnear.com", "https://near.drpc.org"]
-    : [
-        "https://near-testnet.drpc.org",
-        "https://test.rpc.fastnear.com",
-        "https://rpc.testnet.near.org",
-      ];
+    ? ["https://near.drpc.org", "https://rpc.mainnet.near.org"]
+    : ["https://near-testnet.drpc.org", "https://rpc.testnet.near.org"];
 
 export const RPC_URLS: string[] = (() => {
-  const raw = optional("NEAR_RPC_URLS");
-  if (raw) {
-    const parsed = raw.split(",").map((x) => x.trim()).filter(Boolean);
-    if (parsed.length) return parsed;
-  }
-  const single = optional("NEAR_RPC_URL");
-  return single ? [single, ...DEFAULT_RPCS.filter((u) => u !== single)] : DEFAULT_RPCS;
+  const chosen = (): string[] => {
+    const raw = optional("NEAR_RPC_URLS");
+    if (raw) {
+      const parsed = raw.split(",").map((x) => x.trim()).filter(Boolean);
+      if (parsed.length) return parsed;
+    }
+    const single = optional("NEAR_RPC_URL");
+    return single ? [single, ...DEFAULT_RPCS.filter((u) => u !== single)] : DEFAULT_RPCS;
+  };
+  // The filter is applied to configuration too, not only to the defaults. A
+  // stale NEAR_RPC_URL in somebody's shell is exactly how a removed endpoint
+  // comes back, and it would come back silently.
+  const kept = withoutRefusedRpc(chosen());
+  return kept.length ? kept : withoutRefusedRpc(DEFAULT_RPCS);
 })();
 
-/** Kept for the signer, which uses exactly one endpoint on purpose. */
+/**
+ * The one endpoint the signer uses, on purpose.
+ *
+ * A transaction is sent once, to one node. Failing a broadcast over to a
+ * second endpoint risks sending the same signed transaction twice, and the
+ * nonce is the only thing standing between that and a duplicate trade.
+ */
 export const RPC_URL = RPC_URLS[0]!;
 
 /**

@@ -93,6 +93,7 @@ export function buildPrompt(
     "The limits below are enforced in code after you answer. Applying them is not your job. A proposal that breaks a limit on size is trimmed to fit; one that breaks any other limit is refused and logged as a refusal, which reads worse than a plain HOLD:",
     `- a buy may spend at most ${RISK.maxShareOfBalancePerTrade * 100}% of the balance`,
     `- at most ${RISK.maxOpenPositions} positions open at once`,
+    "- no buy in a market you already hold a position in; one position per market, and it is added to only by selling and re-entering",
     `- at most ${RISK.maxTradesPerDay} trades per 24 hours`,
     `- a position past ${RISK.stopLossPct}% or +${RISK.takeProfitPct}% is closed automatically before you are asked`,
     `- no buy smaller than ${RISK.minTradeUsdc} tUSDC`,
@@ -141,12 +142,28 @@ function parseProposal(text: string): Proposal | null {
   return { action, tokenId, sizeUsdc: size, sellFraction: fraction, reason };
 }
 
+/**
+ * Why the model did not answer, in a form the log can be honest about.
+ *
+ * The status matters because 402 is not an outage: it means the account has no
+ * spending limit configured, which is a thing somebody has to go and fix, and
+ * it will keep happening every pass until they do.
+ */
+export type LlmFailure = { error: string; status?: number };
+
+/** One line, said once a pass, naming the real reason. */
+export function describeLlmFailure(f: LlmFailure): string {
+  if (f.status === 402) return "AI: unavailable (402, no credits), using momentum fallback";
+  if (f.status !== undefined) return `AI: unavailable (${f.status}), using momentum fallback`;
+  return `AI: unavailable (${f.error}), using momentum fallback`;
+}
+
 async function askModel(
   markets: MarketView[],
   states: PositionState[],
   balanceUsdc: number,
   tradesLast24h: number,
-): Promise<{ proposal: Proposal; raw: string } | { error: string }> {
+): Promise<{ proposal: Proposal; raw: string } | LlmFailure> {
   const { system, user } = buildPrompt(markets, states, balanceUsdc, tradesLast24h);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 45_000);
@@ -171,7 +188,10 @@ async function askModel(
     };
     if (!res.ok) {
       const detail = typeof body.error === "string" ? body.error : body.error?.message;
-      return { error: `${LLM_MODEL} responded ${res.status}${detail ? `: ${detail}` : ""}` };
+      return {
+        error: `${LLM_MODEL} responded ${res.status}${detail ? `: ${detail}` : ""}`,
+        status: res.status,
+      };
     }
     const raw = body.choices?.[0]?.message?.content ?? "";
     const proposal = parseProposal(raw);
@@ -220,7 +240,12 @@ export function fallbackDecision(
     .filter((m) => m.momentumPct !== undefined && m.momentumPct >= ENTER_PCT && m.liquidity > 0)
     .sort((a, b) => (b.momentumPct ?? 0) - (a.momentumPct ?? 0));
 
-  const best = candidates.find((m) => held.has(m.token.token_id) || held.size < RISK.maxOpenPositions);
+  // A market already held is not a candidate at all. `risk.ts` refuses such a
+  // buy outright, and a proposal made only to be refused costs a pass and
+  // writes a refusal onto the public log for no reason.
+  const best = candidates.find(
+    (m) => !held.has(m.token.token_id) && held.size < RISK.maxOpenPositions,
+  );
   if (best) {
     const size = Math.max(RISK.minTradeUsdc, balanceUsdc * RISK.maxShareOfBalancePerTrade);
     return {
@@ -243,22 +268,37 @@ export function fallbackDecision(
   };
 }
 
+/**
+ * Decide, and say plainly who decided.
+ *
+ * The model's unavailability used to be appended to the proposal's own text,
+ * so every entry the fallback produced ended "(model unavailable: ... 402 ...)"
+ * - a sentence about the vendor's billing, stapled to a sentence about why the
+ * agent bought something, on a public page, once per pass forever. It read
+ * like the trade was broken. The trade was not broken; the fallback is a real
+ * decider and it had decided.
+ *
+ * The outage is still recorded - as its own line in the log, said once a pass,
+ * and as `llmStatus` on the entry. The proposal keeps its own words, and the
+ * entry already carries `decidedBy: "fallback"`, which the page renders as
+ * "momentum fallback". That is the honest label: who decided, not an apology
+ * next to each buy.
+ */
 export async function decide(
   markets: MarketView[],
   states: PositionState[],
   balanceUsdc: number,
   tradesLast24h: number,
-): Promise<Thought & { llmError?: string }> {
+): Promise<Thought & { llmFailure?: LlmFailure }> {
   if (!LLM_API_KEY) {
     return { proposal: fallbackDecision(markets, states, balanceUsdc), decidedBy: "fallback" };
   }
   const answer = await askModel(markets, states, balanceUsdc, tradesLast24h);
   if ("error" in answer) {
-    const proposal = fallbackDecision(markets, states, balanceUsdc);
     return {
-      proposal: { ...proposal, reason: `${proposal.reason} (model unavailable: ${answer.error})` },
+      proposal: fallbackDecision(markets, states, balanceUsdc),
       decidedBy: "fallback",
-      llmError: answer.error,
+      llmFailure: answer,
     };
   }
   return { proposal: answer.proposal, decidedBy: "llm", raw: answer.raw };

@@ -139,6 +139,18 @@ await run("a protocol error does not fail over", async () => {
   }
 });
 
+await run("an endpoint that does not serve the method fails over", async () => {
+  // dRPC serves EXPERIMENTAL_tx_status and refuses tx_status;
+  // rpc.testnet.near.org is the other way round. Neither is a protocol error.
+  install((url) =>
+    url === A
+      ? new Response(JSON.stringify({ error: { code: -32601, message: "method is not available" } }), { status: 200 })
+      : ok(7),
+  );
+  const v = await silent([A, B]).view<number>("c", "m");
+  return v === 7 && hits.length === 2 && hits[1] === B;
+});
+
 console.log("the cache");
 
 await run("an identical call inside the window is served from cache", async () => {
@@ -216,6 +228,76 @@ await run("an empty endpoint list is refused at construction", async () => {
     return false;
   } catch (e) {
     return e instanceof RpcError;
+  }
+});
+
+console.log("the endpoints this agent refuses");
+
+await run("the configured RPC list never contains fastnear", async () => {
+  const { RPC_URLS, RPC_URL } = await import("../src/config.js");
+  const hosts = RPC_URLS.map((u) => new URL(u).hostname);
+  return (
+    RPC_URLS.length > 0 &&
+    !hosts.some((h) => /fastnear/i.test(h)) &&
+    !/fastnear/i.test(RPC_URL)
+  );
+});
+
+await run("the agent reads drpc first and rpc.testnet.near.org second", async () => {
+  const { RPC_URLS } = await import("../src/config.js");
+  return (
+    RPC_URLS[0] === "https://near-testnet.drpc.org" &&
+    RPC_URLS[1] === "https://rpc.testnet.near.org"
+  );
+});
+
+await run("the signer uses the first endpoint and only that one", async () => {
+  const { RPC_URL, RPC_URLS } = await import("../src/config.js");
+  return RPC_URL === RPC_URLS[0] && typeof RPC_URL === "string";
+});
+
+await run("a fastnear endpoint is dropped from a pool that is handed one", async () => {
+  const pool = silent(["https://test.rpc.fastnear.com", A]);
+  return pool.urls.length === 1 && pool.urls[0] === A;
+});
+
+await run("every fastnear subdomain is refused, not just the testnet one", async () => {
+  const pool = silent([
+    "https://free.rpc.fastnear.com",
+    "https://rpc.fastnear.com",
+    "https://archival.fastnear.com",
+    A,
+  ]);
+  return pool.urls.length === 1 && pool.urls[0] === A;
+});
+
+await run("a pool of nothing but fastnear is refused outright", async () => {
+  try {
+    silent(["https://test.rpc.fastnear.com"]);
+    return false;
+  } catch (e) {
+    return e instanceof RpcError;
+  }
+});
+
+await run("a host that merely ends in something similar is not refused", async () => {
+  // The refusal is on the host, anchored - not a substring match that would
+  // also take out a legitimate endpoint with the word in its path.
+  const pool = silent(["https://notfastnear.example", "https://ok.example/fastnear"]);
+  return pool.urls.length === 2;
+});
+
+await run("a fastnear endpoint in the environment is still refused", async () => {
+  const before = process.env.NEAR_RPC_URL;
+  process.env.NEAR_RPC_URL = "https://test.rpc.fastnear.com";
+  try {
+    // config is read once at import, so the environment is checked through the
+    // same filter the configuration uses rather than by re-importing it.
+    const { withoutRefusedRpc } = await import("../src/rpc.js");
+    return withoutRefusedRpc([process.env.NEAR_RPC_URL]).length === 0;
+  } finally {
+    if (before === undefined) delete process.env.NEAR_RPC_URL;
+    else process.env.NEAR_RPC_URL = before;
   }
 });
 
