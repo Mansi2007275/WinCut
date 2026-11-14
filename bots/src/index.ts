@@ -19,8 +19,9 @@
  */
 
 import {
-  BOTS, DRY_RUN, LIVE_MARKETS, MARKETS, MM_ACCOUNT_ID, MM_EVERY_MS, MM_PRIVATE_KEY,
-  RUN_ONCE, TICK_MS, VIEW_CACHE_MS, describeConfig, type MarketConfig,
+  BOTS, DRY_RUN, LIVE_MARKETS, MARKETS, MARKET_STALE_MS, MM_ACCOUNT_ID, MM_EVERY_MS,
+  MM_PRIVATE_KEY, RUN_ONCE, TICK_MS, VIEW_CACHE_MS, describeConfig,
+  type BotConfig, type MarketConfig,
 } from "./config.js";
 import { fmtPrice, readNearUsd, readPoolFor } from "./peg.js";
 import { runMaker } from "./mm.js";
@@ -88,9 +89,42 @@ async function makerPass(): Promise<void> {
 /** Which market each bot trades next, so they move through them in turn. */
 const rotation = new Map<string, number>();
 
+/** When each market last saw a trade from anyone, for the staleness rule. */
+const marketLastTradeAt = new Map<number, number>();
+
+/** A fresh interval for this bot, drawn from its range. */
+const nextDelay = (bot: BotConfig): number =>
+  bot.everyMinMs + Math.random() * Math.max(bot.everyMaxMs - bot.everyMinMs, 0);
+
+/**
+ * The market this bot trades next.
+ *
+ * Plain round-robin covers every market eventually, but "eventually" is the
+ * problem: three bots each stepping through four markets on their own clocks
+ * can leave one market untouched for a long stretch, and a chart of that
+ * market is a flat line for as long as it lasts. So a market nobody has
+ * traded for MARKET_STALE_MS jumps the queue, and the rotation handles the
+ * rest. Starvation is the only thing being corrected here - when every market
+ * is fresh, this is exactly the old behaviour.
+ */
 function nextMarket(accountId: string, live: MarketConfig[]): MarketConfig {
+  const now = Date.now();
   const i = rotation.get(accountId) ?? Math.floor(Math.random() * live.length);
   rotation.set(accountId, (i + 1) % live.length);
+
+  const stale = live
+    .filter((m) => now - (marketLastTradeAt.get(m.poolId) ?? 0) >= MARKET_STALE_MS)
+    .sort(
+      (a, b) =>
+        (marketLastTradeAt.get(a.poolId) ?? 0) - (marketLastTradeAt.get(b.poolId) ?? 0),
+    );
+
+  // At startup nothing has traded, so every market is equally stale and
+  // sorting leaves them in config order - which would send every bot to the
+  // first market until it alone stopped being stale. The rotation still
+  // chooses among the stale ones; staleness decides the set, not the pick.
+  if (stale.length) return stale[i % stale.length]!;
+
   return live[i % live.length]!;
 }
 
@@ -110,6 +144,7 @@ async function tradersPass(due: typeof BOTS): Promise<void> {
         bot, market, history, (s) => console.log(`[${stamp()}] ${s}`), depths.get(market.poolId),
       );
       if (pass.txHash) {
+        marketLastTradeAt.set(market.poolId, Date.now());
         // Re-read so the recorded point is the price the trade left behind
         // rather than the one it was decided on. Worth one extra call: a trade
         // point that reports the pre-trade price is the one point in the series
@@ -142,7 +177,10 @@ async function tradersPass(due: typeof BOTS): Promise<void> {
 function estimateLoad(markets: number): string {
   const ticksPerMin = 60_000 / TICK_MS;
   const makerPassesPerMin = 60_000 / MM_EVERY_MS;
-  const botPassesPerMin = BOTS.reduce((s, b) => s + 60_000 / b.everyMs, 0);
+  const botPassesPerMin = BOTS.reduce(
+    (s, b) => s + 60_000 / ((b.everyMinMs + b.everyMaxMs) / 2),
+    0,
+  );
 
   // One get_pool per market per tick.
   const tickCalls = ticksPerMin * markets;
@@ -214,7 +252,7 @@ async function main(): Promise<void> {
   // rather than shifting the whole schedule.
   let makerDue = Date.now();
   let reportDue = Date.now() + 5 * 60_000;
-  const botDue = new Map(BOTS.map((b) => [b.accountId, Date.now() + Math.random() * b.everyMs]));
+  const botDue = new Map(BOTS.map((b) => [b.accountId, Date.now() + Math.random() * b.everyMinMs]));
   for (;;) {
     await tick();
 
@@ -227,7 +265,7 @@ async function main(): Promise<void> {
     const due = BOTS.filter((b) => now >= (botDue.get(b.accountId) ?? 0));
     if (due.length) {
       await tradersPass(due);
-      for (const b of due) botDue.set(b.accountId, Date.now() + b.everyMs);
+      for (const b of due) botDue.set(b.accountId, Date.now() + nextDelay(b));
     }
 
     if (Date.now() >= reportDue) {

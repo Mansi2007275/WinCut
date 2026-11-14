@@ -22,7 +22,7 @@ import type { Account } from "near-api-js";
 
 import { getBalance, getPositions, getReturn, signerFor, wincutBuy, wincutSell, explorerTx } from "./chain.js";
 import {
-  BOT_RISK, CONTRACT_ID, DRY_RUN, REF_CONTRACT, SLIPPAGE_BPS, USDC_DECIMALS, USDC_ID,
+  BOT_RISK, BOT_SIZE, CONTRACT_ID, DRY_RUN, REF_CONTRACT, SLIPPAGE_BPS, USDC_DECIMALS, USDC_ID,
   type BotConfig, type MarketConfig,
 } from "./config.js";
 
@@ -141,13 +141,28 @@ type MarketState = {
  * Randomised, and kept per bot, so the three do not arrive together and turn
  * the market into synchronised bursts.
  */
-const LIQUIDITY_MIN_MS = 3 * 60_000;
-const LIQUIDITY_MAX_MS = 6 * 60_000;
+const LIQUIDITY_MIN_MS = 90_000;
+const LIQUIDITY_MAX_MS = 180_000;
 
 const nextLiquidityWindow = (): number =>
   Date.now() + LIQUIDITY_MIN_MS + Math.random() * (LIQUIDITY_MAX_MS - LIQUIDITY_MIN_MS);
 
 const round2 = (n: number): number => Math.floor(n * 100) / 100;
+
+/**
+ * The size this pass would like to trade, before any cap touches it.
+ *
+ * Drawn rather than fixed. A bot whose every trade is the same number leaves a
+ * signature on the chart that no amount of real settlement makes look like a
+ * market, and the configured `bot.sizeUsdc` stays meaningful as the ceiling of
+ * the range. Every limit downstream is unchanged: this only decides what gets
+ * asked for, never what is allowed.
+ */
+const drawSize = (bot: BotConfig): number => {
+  const hi = Math.min(bot.sizeUsdc, BOT_SIZE.maxUsdc);
+  const lo = Math.min(BOT_SIZE.minUsdc, hi);
+  return round2(lo + Math.random() * (hi - lo));
+};
 
 const states = new Map<string, BotState>();
 const marketStates = new Map<string, MarketState>();
@@ -316,7 +331,7 @@ function liquidityTrade(
   if (Date.now() < (state.nextLiquidityAt ?? Infinity)) return undefined;
 
   const quiet = Math.round((Date.now() - (state.lastTradeAt ?? state.dayStartedAt)) / 60_000);
-  const ceiling = Math.min(bot.sizeUsdc, buyCeiling(balanceUsdc, quoteReserve));
+  const ceiling = Math.min(drawSize(bot), buyCeiling(balanceUsdc, quoteReserve));
   const canBuy = ceiling >= BOT_RISK.minTradeUsdc;
   const canSell = positionTokens > 0;
   if (!canBuy && !canSell) return undefined;
@@ -390,12 +405,13 @@ export async function runBot(
   const pnlPct =
     held && basis > 0 && price !== undefined ? ((positionTokens * price - basis) / basis) * 100 : undefined;
 
+  const want = drawSize(bot);
   let decision =
     bot.kind === "momentum"
-      ? momentum(history, pnlPct, bot.sizeUsdc)
+      ? momentum(history, pnlPct, want)
       : bot.kind === "reversion"
-        ? reversion(history, pnlPct, bot.sizeUsdc)
-        : grid(pnlPct, bot.sizeUsdc, mstate, positionTokens);
+        ? reversion(history, pnlPct, want)
+        : grid(pnlPct, want, mstate, positionTokens);
 
   // The strategy had nothing to say. If it has had nothing to say for long
   // enough, trade anyway - and say that that is why.
