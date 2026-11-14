@@ -29,9 +29,13 @@ says so in those words.
 
 ## Screenshots
 
-_Pending: `docs/img/trade.png`, `docs/img/dashboard.png`, `docs/img/agent.png`._
+<img width="1890" height="1010" alt="Screenshot 2026-11-14 162334" src="https://github.com/user-attachments/assets/573976c0-f444-4c90-a459-3e6abc00128e" />
+<img width="1902" height="1011" alt="Screenshot 2026-11-14 152211" src="https://github.com/user-attachments/assets/ff6d4573-2882-47f6-8d09-8766a2f15067" />
+<img width="1866" height="798" alt="Screenshot 2026-11-14 194356" src="https://github.com/user-attachments/assets/07b758ea-52dd-43a0-a802-076475f9807f" />
+<img width="1755" height="1016" alt="Screenshot 2026-11-14 152328" src="https://github.com/user-attachments/assets/e7d2d8fa-d354-4c56-9d8d-7c7a4b896630" />
 
----
+
+
 
 ## Why it can't be gamed
 
