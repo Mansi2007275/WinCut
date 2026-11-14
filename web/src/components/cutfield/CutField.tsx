@@ -23,7 +23,22 @@ import { layout, type Hover } from "./Field3D.types";
 const Field3D = lazy(() => import("./Field3D"));
 
 /** Why the flat version is on screen, in the viewer's own terms. */
-type Mode = { kind: "3d" } | { kind: "2d"; because: string };
+type Mode = { because: string };
+
+/** The sentinel `because` for "nothing is stopping the 3D field here". */
+const OFFERABLE = "flat by default";
+
+/**
+ * The flat field is the default, and the 3D one is a button.
+ *
+ * Not a stylistic preference. The SVG field carries every number this page is
+ * making a claim about, at every width, with no GPU and no second bundle; the
+ * canvas adds one thing on top of that - watching the fee leave the pillar -
+ * and on this machine it has been able to wedge the renderer badly enough that
+ * the tab stops answering. A centrepiece that can take the whole page down is
+ * worse than no centrepiece, so it only mounts when someone asks for it, and
+ * the page is complete without it.
+ */
 
 function hasWebgl(): boolean {
   try {
@@ -45,19 +60,20 @@ export function CutField({
 }) {
   // Server-rendered as the SVG: it needs no measurement and no canvas, so the
   // first paint is the real thing rather than a placeholder that swaps.
-  const [mode, setMode] = useState<Mode>({ kind: "2d", because: "still checking this device" });
+  const [mode, setMode] = useState<Mode>({ because: "still checking this device" });
   const [hover, setHover] = useState<Hover>(null);
   const [paused, setPaused] = useState(false);
+  const [wants3d, setWants3d] = useState(false);
 
   useEffect(() => {
     const motion = window.matchMedia("(prefers-reduced-motion: reduce)");
     const small = window.matchMedia("(max-width: 1023px)");
 
     const decide = () => {
-      if (motion.matches) return setMode({ kind: "2d", because: "you asked for reduced motion" });
-      if (small.matches) return setMode({ kind: "2d", because: "narrow screen" });
-      if (!hasWebgl()) return setMode({ kind: "2d", because: "this browser has no WebGL" });
-      setMode({ kind: "3d" });
+      if (motion.matches) return setMode({ because: "you asked for reduced motion" });
+      if (small.matches) return setMode({ because: "narrow screen" });
+      if (!hasWebgl()) return setMode({ because: "this browser has no WebGL" });
+      setMode({ because: OFFERABLE });
     };
     decide();
     motion.addEventListener("change", decide);
@@ -67,6 +83,10 @@ export function CutField({
       small.removeEventListener("change", decide);
     };
   }, []);
+
+  // A device that cannot run it is never offered it.
+  const offer3d = mode.because === OFFERABLE;
+  const showing3d = wants3d && offer3d;
 
   const data = useMemo(() => layout(ring, markets), [ring, markets]);
 
@@ -79,28 +99,42 @@ export function CutField({
         <p className="mono text-[10px] text-secondary">
           x time · z market · y realised P&amp;L · {ring.length} settled trades
         </p>
-        {mode.kind === "3d" && (
-          <button
-            onClick={() => setPaused((p) => !p)}
-            className="mono ml-auto rounded-btn border border-border px-2 py-0.5 text-[10px] text-secondary hover:text-text"
-          >
-            {paused ? "resume orbit" : "pause orbit"}
-          </button>
-        )}
+        <div className="mono ml-auto flex items-center gap-2 text-[10px]">
+          {showing3d && (
+            <button
+              onClick={() => setPaused((p) => !p)}
+              className="rounded-btn border border-border px-2 py-0.5 text-secondary hover:text-text"
+            >
+              {paused ? "resume orbit" : "pause orbit"}
+            </button>
+          )}
+          {offer3d && (
+            <button
+              onClick={() => setWants3d((v) => !v)}
+              className="rounded-btn border border-border px-2 py-0.5 text-secondary hover:text-text"
+              aria-pressed={showing3d}
+            >
+              {showing3d ? "flat view" : "3D view"}
+            </button>
+          )}
+        </div>
       </header>
 
       <div
         className="relative field-grid"
-        style={{ height: mode.kind === "3d" ? 420 : undefined }}
+        style={{ height: showing3d ? 420 : undefined }}
       >
-        {mode.kind === "3d" ? (
+        {showing3d ? (
           <Suspense fallback={<Field2D ring={ring} markets={markets} />}>
             <Field3D
               data={data}
               lanes={markets.length}
               onHover={setHover}
               paused={paused}
-              onError={() => setMode({ kind: "2d", because: "WebGL could not start here" })}
+              onError={() => {
+                setWants3d(false);
+                setMode({ because: "WebGL could not start here" });
+              }}
             />
           </Suspense>
         ) : (
@@ -123,7 +157,10 @@ export function CutField({
         )}
       </div>
 
-      <Legend charged={charged} flat={mode.kind === "2d" ? mode.because : undefined} />
+      <Legend
+        charged={charged}
+        flat={showing3d || mode.because === OFFERABLE ? undefined : mode.because}
+      />
     </section>
   );
 }

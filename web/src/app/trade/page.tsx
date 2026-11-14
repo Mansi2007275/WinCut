@@ -16,6 +16,7 @@ import { Page } from "@/components/Shell";
 import { Card, Empty, SkeletonRows } from "@/components/ui";
 import { MarketRow } from "@/components/MarketRow";
 import { useAllPoolStats, useTokens } from "@/lib/queries";
+import { NETWORK } from "@/lib/near";
 
 export default function MarketsPage() {
   const tokens = useTokens();
@@ -26,8 +27,13 @@ export default function MarketsPage() {
       <header>
         <h1 className="text-lg font-semibold">Markets</h1>
         <p className="mt-1 text-[11px] leading-relaxed text-secondary">
-          Every market routes through Rhea on NEAR mainnet. Buying costs no WinCut fee at all;
-          selling costs 10% of your profit, and nothing if there is none.
+          {/* The exchange is named from the network, not hardcoded: on testnet
+              these pools are Ref Finance's testnet deployment, and telling a
+              testnet visitor their trade routes through mainnet is simply
+              false. */}
+          Every market routes through {NETWORK === "mainnet" ? "Rhea on NEAR mainnet" : "Ref Finance on NEAR testnet"}.
+          Buying costs no WinCut fee at all; selling costs 10% of your profit, and nothing if
+          there is none.
         </p>
       </header>
 
