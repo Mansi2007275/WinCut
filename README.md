@@ -55,15 +55,6 @@ Also: [markets](docs/img/markets.png) · [traders](docs/img/board.png) ·
 [home](docs/img/home.png) · 390px [dashboard](docs/img/mobile-dashboard.png) and
 [how it works](docs/img/mobile-how-it-works.png).
 
-<img width="1890" height="1010" alt="Screenshot 2026-11-14 162334" src="https://github.com/user-attachments/assets/573976c0-f444-4c90-a459-3e6abc00128e" />
-<img width="1902" height="1011" alt="Screenshot 2026-11-14 152211" src="https://github.com/user-attachments/assets/ff6d4573-2882-47f6-8d09-8766a2f15067" />
-<img width="1866" height="798" alt="Screenshot 2026-11-14 194356" src="https://github.com/user-attachments/assets/07b758ea-52dd-43a0-a802-076475f9807f" />
-<img width="1755" height="1016" alt="Screenshot 2026-11-14 152328" src="https://github.com/user-attachments/assets/e7d2d8fa-d354-4c56-9d8d-7c7a4b896630" />
-
-
-
-
-
 ## Why it can't be gamed
 
 - **The contract holds the position, not the user.** Tokens land in the contract's own account
@@ -105,8 +96,8 @@ restricted key.
   binding cap rather than refusing it, and names which cap bound it.
 - **Deterministic fallback:** with no API key, or when the model errors, a momentum rule decides
   instead. The log says which one acted on every pass, every time.
-- The stop loss is not decoration: the agent is currently **−38.09 tUSDC** across 23 trades and
-  13 losses. Those numbers are below, unedited.
+- The stop loss is not decoration: the agent is currently **−51.52 tUSDC** across 52 trades and
+  20 losses. Those numbers are below, unedited.
 
 ---
 
@@ -279,9 +270,8 @@ cd agent && npm start                    # DRY_RUN=1 to decide without signing
   measuring entirely, at the cost of a round trip.
 - **The maker drains on a trend.** It sells the base token when the pool is rich and buys when
   it is cheap, so a sustained mainnet rally empties its base inventory and the peg drifts up
-  until somebody tops it up. Right now MLONK is **+10.1%** off peg for exactly that reason: the
-  maker holds **0 MLONK** and cannot sell what it does not have. The log states the drift every
-  minute rather than hiding it, and the UI shows the pool price, never the peg.
+  until somebody tops it up. The log states the drift every minute rather than hiding it, and
+  the UI shows the pool price, never the peg.
 - **Market orders only**, and **copying is attribution, not mirroring** — naming a trader pays
   them a share of your profit fee, it does not place their trades for you.
 - **Last 500 trades on chain**, older ones in the NEP-297 event log, so state cannot grow
@@ -300,12 +290,6 @@ web/             Next.js 15 · /trade, /dashboard ("The Cut Field"), /agent
 bots/            market maker + momentum/mean-reversion/grid bots, 4 markets
 agent/           the AI trader: NEAR AI Cloud brain, risk layer, restricted key
 scripts/         verify-mainnet.mjs, print-deploy-commands.mjs
-legacy-arc/      the earlier Uniswap v4 hook build on Arc, kept for history
-docs/DEMO.md     two-minute demo script
 ```
-
-Originally prototyped as a Uniswap v4 hook on Arc, then rebuilt for NEAR — the fee rule needed
-to live in an account that custodies positions and keeps per-user credit, which is a contract,
-not a hook. The Arc work is in [`legacy-arc/`](legacy-arc/).
 
 MIT.
