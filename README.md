@@ -93,8 +93,8 @@ restricted key.
   binding cap rather than refusing it, and names which cap bound it.
 - **Deterministic fallback:** with no API key, or when the model errors, a momentum rule decides
   instead. The log says which one acted on every pass, every time.
-- The stop loss is not decoration: the agent is currently **−38.09 tUSDC** across 23 trades and
-  13 losses. Those numbers are below, unedited.
+- The stop loss is not decoration: the agent is currently **−51.52 tUSDC** across 52 trades and
+  20 losses. Those numbers are below, unedited.
 
 ---
 
@@ -267,9 +267,8 @@ cd agent && npm start                    # DRY_RUN=1 to decide without signing
   measuring entirely, at the cost of a round trip.
 - **The maker drains on a trend.** It sells the base token when the pool is rich and buys when
   it is cheap, so a sustained mainnet rally empties its base inventory and the peg drifts up
-  until somebody tops it up. Right now MLONK is **+10.1%** off peg for exactly that reason: the
-  maker holds **0 MLONK** and cannot sell what it does not have. The log states the drift every
-  minute rather than hiding it, and the UI shows the pool price, never the peg.
+  until somebody tops it up. The log states the drift every minute rather than hiding it, and
+  the UI shows the pool price, never the peg.
 - **Market orders only**, and **copying is attribution, not mirroring** — naming a trader pays
   them a share of your profit fee, it does not place their trades for you.
 - **Last 500 trades on chain**, older ones in the NEP-297 event log, so state cannot grow
@@ -288,12 +287,6 @@ web/             Next.js 15 · /trade, /dashboard ("The Cut Field"), /agent
 bots/            market maker + momentum/mean-reversion/grid bots, 4 markets
 agent/           the AI trader: NEAR AI Cloud brain, risk layer, restricted key
 scripts/         verify-mainnet.mjs, print-deploy-commands.mjs
-legacy-arc/      the earlier Uniswap v4 hook build on Arc, kept for history
-docs/DEMO.md     two-minute demo script
 ```
-
-Originally prototyped as a Uniswap v4 hook on Arc, then rebuilt for NEAR — the fee rule needed
-to live in an account that custodies positions and keeps per-user credit, which is a contract,
-not a hook. The Arc work is in [`legacy-arc/`](legacy-arc/).
 
 MIT.
